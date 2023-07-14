@@ -62,7 +62,10 @@ impl Storage {
         Ok(())
     }
 
-    //pub fn get_balance
+    pub fn get_balance(&self, account_id: &str, date: Date, dimension: &(Arc<str>, DataValue)) -> f64 {
+        let ledger_accounts = self.ledger_accounts.read().unwrap();
+        ledger_accounts.get(account_id).unwrap().get_balance(date, dimension)
+    }
 }
 
 
@@ -101,16 +104,22 @@ impl LedgerStore {
         
     }
 
-    pub fn get_balance(&self, dimension: &(Arc<str>, DataValue)) -> f64 {        
-        let day = self.days.last_key_value().unwrap().1;
-        day.get_balance(dimension)
+    pub fn get_balance(&self, date: Date, dimension: &(Arc<str>, DataValue)) -> f64 {        
+        let mut balance = 0.0;
+        let mut days = self.days.range((Bound::Unbounded, Bound::Excluded(date)));
+        while let Some((_, day)) = days.next_back() {
+            if let Some(sum) = day.sum_by_dimension.get(dimension) {
+                balance += sum;
+            }
+        }
+        balance
     }
 }
 
 #[derive(Debug, Clone)]
 struct LedgerDay {
     sum_by_dimension: HashMap<(Arc<str>, DataValue), f64>,
-    accumulated_sum_by_dimension: HashMap<(Arc<str>, DataValue), f64>,
+    //accumulated_sum_by_dimension: HashMap<(Arc<str>, DataValue), f64>,
     entries: Vec<LedgerEntry>,
 }
 
@@ -118,7 +127,7 @@ impl LedgerDay {
     pub fn new() -> Self {
         Self {
             sum_by_dimension: HashMap::new(),
-            accumulated_sum_by_dimension: HashMap::new(),
+            //accumulated_sum_by_dimension: HashMap::new(),
             entries: Vec::new(),
         }
     }
@@ -139,12 +148,12 @@ impl LedgerDay {
             let sum = self.sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
             *sum += amount;
 
-            let accumulated_sum = self.accumulated_sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
-            *accumulated_sum += amount;
+            // let accumulated_sum = self.accumulated_sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
+            // *accumulated_sum += amount;
         }
     }
 
     pub fn get_balance(&self, dimension: &(Arc<str>, DataValue)) -> f64 {
-        *self.accumulated_sum_by_dimension.get(dimension).unwrap_or(&0.0)
+        *self.sum_by_dimension.get(dimension).unwrap_or(&0.0)
     }
 }
