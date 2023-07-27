@@ -3,9 +3,10 @@ use std::{collections::{BTreeMap, HashMap}, sync::{Arc, RwLock}, ops::Bound};
 use time::Date;
 use uuid::Uuid;
 
-use crate::models::{write::{CreateJournalCommand, LedgerEntryCommand}, AccountType, DataValue, read::JournalEntry};
+use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand}, AccountType, DataValue, read::JournalEntry}, evaluator::EvaluationError};
 
 
+#[derive(Debug)]
 pub enum StorageError {
     IOError(std::io::Error),
     Other(String),

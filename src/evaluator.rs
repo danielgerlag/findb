@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc, ops::Add};
 use ordered_float::OrderedFloat;
 use time::Date;
 
-use crate::{ast, models::DataValue};
+use crate::{ast, models::DataValue, storage::StorageError};
 
 
 
@@ -14,22 +14,32 @@ pub enum EvaluationError {
     UnknownIdentifier(String),
     UnknownFunction(String),
     InvalidArgumentCount(String),
+    StorageError(StorageError),
 }
 
+
+
+impl From<StorageError> for EvaluationError {
+    fn from(val: StorageError) -> Self {
+        EvaluationError::StorageError(val)
+    }
+}
 
 pub type QueryVariables = BTreeMap<Arc<str>, DataValue>;
 
 #[derive(Debug, Clone)]
 pub struct ExpressionEvaluationContext {
+  effective_date: Option<Date>,
   variables: QueryVariables,
   
 }
 
 impl ExpressionEvaluationContext {
 
-  pub fn new(variables: QueryVariables) -> ExpressionEvaluationContext {
+  pub fn new(effective_date: Option<Date>, variables: QueryVariables) -> ExpressionEvaluationContext {
     ExpressionEvaluationContext {
-      variables,
+        effective_date,
+        variables,
     }
   }
 
@@ -44,6 +54,14 @@ impl ExpressionEvaluationContext {
   pub fn clone_variables(&self) -> QueryVariables {
     self.variables.clone()
   }
+
+    pub fn set_effective_date(&mut self, date: Date) {
+        self.effective_date = Some(date);
+    }
+
+    pub fn get_effective_date(&self) -> Option<Date> {
+        self.effective_date
+    }
   
 }
 
@@ -125,7 +143,7 @@ impl ExpressionEvaluator {
                 ast::Literal::Text(t) => DataValue::String(t.to_string()),
                 ast::Literal::Null => DataValue::Null,
                 ast::Literal::Integer(i) => DataValue::Int(*i),
-                ast::Literal::Real(r) => DataValue::Float(OrderedFloat::from(*r)),
+                ast::Literal::Real(r) => DataValue::Money(OrderedFloat::from(*r)),
                 ast::Literal::Date(d) => DataValue::Date(*d),
                 
             },
@@ -171,7 +189,7 @@ impl ExpressionEvaluator {
                 self.evaluate_expression(context, e2)?,
             ) {
                 (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Bool(n1 == n2),
-                (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Bool(n1 == n2),
+                (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Bool(n1 == n2),
                 (DataValue::Date(n1), DataValue::Date(n2)) => DataValue::Bool(n1 == n2),
                 (DataValue::String(s1), DataValue::String(s2)) => DataValue::Bool(s1 == s2),
                 (DataValue::Bool(b1), DataValue::Bool(b2)) => DataValue::Bool(b1 == b2),
@@ -184,7 +202,7 @@ impl ExpressionEvaluator {
                 self.evaluate_expression(context, e2)?,
             ) {
                 (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Bool(n1 != n2),
-                (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Bool(n1 != n2),
+                (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Bool(n1 != n2),
                 (DataValue::Date(n1), DataValue::Date(n2)) => DataValue::Bool(n1 != n2),
                 (DataValue::String(s1), DataValue::String(s2)) => DataValue::Bool(s1 != s2),
                 (DataValue::Bool(b1), DataValue::Bool(b2)) => DataValue::Bool(b1 != b2),
@@ -197,7 +215,7 @@ impl ExpressionEvaluator {
                 self.evaluate_expression(context, e2)?,
             ) {
                 (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Bool(n1 < n2),
-                (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Bool(n1 < n2),
+                (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Bool(n1 < n2),
                 (DataValue::Date(n1), DataValue::Date(n2)) => DataValue::Bool(n1 < n2),
                 _ => DataValue::Bool(false),
             },
@@ -206,7 +224,7 @@ impl ExpressionEvaluator {
                 self.evaluate_expression(context, e2)?,
             ) {
                 (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Bool(n1 <= n2),
-                (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Bool(n1 <= n2),
+                (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Bool(n1 <= n2),
                 (DataValue::Date(n1), DataValue::Date(n2)) => DataValue::Bool(n1 <= n2),
                 _ => DataValue::Bool(false),
             },
@@ -215,7 +233,7 @@ impl ExpressionEvaluator {
                 self.evaluate_expression(context, e2)?,
             ) {
                 (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Bool(n1 > n2),
-                (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Bool(n1 > n2),
+                (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Bool(n1 > n2),
                 (DataValue::Date(n1), DataValue::Date(n2)) => DataValue::Bool(n1 > n2),
                 _ => DataValue::Bool(false),
             },
@@ -224,7 +242,7 @@ impl ExpressionEvaluator {
                 self.evaluate_expression(context, e2)?,
             ) {
                 (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Bool(n1 >= n2),
-                (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Bool(n1 >= n2),
+                (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Bool(n1 >= n2),
                 (DataValue::Date(n1), DataValue::Date(n2)) => DataValue::Bool(n1 >= n2),
                 _ => DataValue::Bool(false),
             },
@@ -233,9 +251,9 @@ impl ExpressionEvaluator {
                 let n2 = self.evaluate_expression(context, e2)?;
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 + n2),
-                    (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Float(n1 + n2),
-                    (DataValue::Int(n1), DataValue::Float(n2)) => DataValue::Float(OrderedFloat::from(n1 as f64) + n2),
-                    (DataValue::Float(n1), DataValue::Int(n2)) => DataValue::Float(n1 + n2 as f64),
+                    (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 + n2),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) + n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 + n2 as f64),
                     //(QueryValue::Date(d1), QueryValue::Date(d2)) => QueryValue::Date(d1.add(d2)),
 
                     (DataValue::Int(n1), DataValue::String(s2)) => DataValue::String(n1.to_string() + &s2),
@@ -250,9 +268,9 @@ impl ExpressionEvaluator {
                 let n2 = self.evaluate_expression(context, e2)?;
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 - n2),
-                    (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Float(n1 - n2),
-                    (DataValue::Int(n1), DataValue::Float(n2)) => DataValue::Float(OrderedFloat::from(n1 as f64) - n2),
-                    (DataValue::Float(n1), DataValue::Int(n2)) => DataValue::Float(n1 - n2 as f64),
+                    (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 - n2),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) - n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 - n2 as f64),
                     _ => DataValue::Null,
                 }
             }
@@ -261,9 +279,9 @@ impl ExpressionEvaluator {
                 let n2 = self.evaluate_expression(context, e2)?;
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 * n2),
-                    (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Float(n1 * n2),
-                    (DataValue::Int(n1), DataValue::Float(n2)) => DataValue::Float(OrderedFloat::from(n1 as f64) * n2),
-                    (DataValue::Float(n1), DataValue::Int(n2)) => DataValue::Float(n1 * n2 as f64),
+                    (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 * n2),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) * n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 * n2 as f64),
                     _ => DataValue::Null,
                 }
             }
@@ -272,9 +290,9 @@ impl ExpressionEvaluator {
                 let n2 = self.evaluate_expression(context, e2)?;
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 / n2),
-                    (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Float(n1 / n2),
-                    (DataValue::Int(n1), DataValue::Float(n2)) => DataValue::Float(OrderedFloat::from(n1 as f64) / n2),
-                    (DataValue::Float(n1), DataValue::Int(n2)) => DataValue::Float(n1 / n2 as f64),
+                    (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 / n2),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) / n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 / n2 as f64),
                     _ => DataValue::Null,
                 }
             }
@@ -290,9 +308,9 @@ impl ExpressionEvaluator {
                 let n2 = self.evaluate_expression(context, e2)?;
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 % n2),
-                    (DataValue::Float(n1), DataValue::Float(n2)) => DataValue::Float(n1 % n2),
-                    (DataValue::Int(n1), DataValue::Float(n2)) => DataValue::Float(OrderedFloat::from(n1 as f64) % n2),
-                    (DataValue::Float(n1), DataValue::Int(n2)) => DataValue::Float(n1 % n2 as f64),
+                    (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 % n2),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) % n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 % n2 as f64),
                     _ => DataValue::Null,
                 }
             },
