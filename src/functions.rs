@@ -32,11 +32,12 @@ impl ScalarFunction for Balance {
         };
 
         let dimension = match args.get(2) {
-            Some(DataValue::Dimension(dimension)) => dimension,
+            Some(DataValue::Dimension(dimension)) => Some(dimension.clone()),
+            None => None,
             _ => return Err(EvaluationError::InvalidArgument("dimension".to_string())),
         };
 
-        let result = self.storage.get_balance(&account_id, *effective_date, &(dimension.0.clone(), dimension.1.clone()));
+        let result = self.storage.get_balance(&account_id, *effective_date, dimension);
 
         Ok(DataValue::Money(OrderedFloat::from(result)))
     }

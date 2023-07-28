@@ -26,3 +26,16 @@ pub enum LedgerEntryCommand {
 //     pub id: Arc<str>,    
     
 // }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateRateCommand {
+    pub id: Arc<str>,    
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetRateCommand {
+    pub id: Arc<str>,
+    pub date: Date,
+    pub rate: f64,
+}

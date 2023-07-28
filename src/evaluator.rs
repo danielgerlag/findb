@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc, ops::Add};
 use ordered_float::OrderedFloat;
 use time::Date;
 
-use crate::{ast, models::DataValue, storage::StorageError, function_registry::{FunctionRegistry, Function}};
+use crate::{ast, models::DataValue, storage::{StorageError, Storage}, function_registry::{FunctionRegistry, Function}};
 
 
 
@@ -16,6 +16,7 @@ pub enum EvaluationError {
     InvalidArgument(String),
     InvalidArgumentCount(String),
     StorageError(StorageError),
+    NoRateFound,
 }
 
 
@@ -30,14 +31,14 @@ pub type QueryVariables = BTreeMap<Arc<str>, DataValue>;
 
 #[derive(Debug, Clone)]
 pub struct ExpressionEvaluationContext {
-  effective_date: Option<Date>,
+  effective_date: Date,
   variables: QueryVariables,
   
 }
 
 impl ExpressionEvaluationContext {
 
-  pub fn new(effective_date: Option<Date>, variables: QueryVariables) -> ExpressionEvaluationContext {
+  pub fn new(effective_date: Date, variables: QueryVariables) -> ExpressionEvaluationContext {
     ExpressionEvaluationContext {
         effective_date,
         variables,
@@ -57,10 +58,10 @@ impl ExpressionEvaluationContext {
   }
 
     pub fn set_effective_date(&mut self, date: Date) {
-        self.effective_date = Some(date);
+        self.effective_date = date;
     }
 
-    pub fn get_effective_date(&self) -> Option<Date> {
+    pub fn get_effective_date(&self) -> Date {
         self.effective_date
     }
   
@@ -68,13 +69,15 @@ impl ExpressionEvaluationContext {
 
 pub struct ExpressionEvaluator {
     function_registry: Arc<FunctionRegistry>,
+    storage: Arc<Storage>,
 }
 
 impl ExpressionEvaluator {
 
-    pub fn new(function_registry: Arc<FunctionRegistry>) -> ExpressionEvaluator {
+    pub fn new(function_registry: Arc<FunctionRegistry>, storage: Arc<Storage>) -> ExpressionEvaluator {
         ExpressionEvaluator {  
             function_registry,
+            storage,
         }
     }
 
@@ -124,10 +127,7 @@ impl ExpressionEvaluator {
                 _ => "expression",
             },
             ast::Expression::BinaryExpression(_) => "expression",
-            _ => todo!()
-            // ast::Expression::FunctionExpression(f) => f.name,
-            // ast::Expression::CaseExpression(_) => "case",
-            // ast::Expression::ListExpression(_) => "list",
+            ast::Expression::VariadicExpression(_) => "expression",
         };
 
         Ok((alias.to_string(), value))
@@ -153,6 +153,7 @@ impl ExpressionEvaluator {
                 ast::Literal::Real(r) => DataValue::Money(OrderedFloat::from(*r)),
                 ast::Literal::Date(d) => DataValue::Date(*d),
                 ast::Literal::Account(a) => DataValue::AccountId(a.clone()),
+                ast::Literal::Percentage(p) => DataValue::Percentage(OrderedFloat::from(*p)),
                 
                 
             },
@@ -181,6 +182,10 @@ impl ExpressionEvaluator {
                 let value = self.evaluate_expression(context, &d.value)?;
                 DataValue::Dimension((d.id.clone(), Arc::new(value)))
             }
+            ast::UnaryExpression::Rate(rate) => {
+                let val = self.storage.get_rate(rate.as_ref(), context.get_effective_date()).unwrap();
+                DataValue::Percentage(OrderedFloat::from(val))
+            },
         };
         Ok(result)
     }
@@ -343,7 +348,6 @@ impl ExpressionEvaluator {
             },
             ast::VariadicExpression::CaseExpression(_) => todo!(),
             ast::VariadicExpression::ListExpression(_) => todo!(),
-            ast::VariadicExpression::BalanceExpression(_) => todo!(),
         }
     }
 

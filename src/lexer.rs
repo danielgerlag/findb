@@ -15,10 +15,12 @@ peg::parser! {
 
         rule kw_select()    = ("SELECT" / "select")
         rule kw_get()       = ("GET" / "get")
+        rule kw_set()       = ("SET" / "set")
         rule kw_create()    = ("CREATE" / "create")
         rule kw_journal()   = ("JOURNAL" / "journal")
         rule kw_account()   = ("ACCOUNT" / "account")
         rule kw_balance()   = ("BALANCE" / "balance")
+        rule kw_rate()      = ("RATE" / "rate")
 
         rule kw_debit()     = ("DEBIT" / "debit")
         rule kw_credit()    = ("CREDIT" / "credit")
@@ -108,16 +110,18 @@ peg::parser! {
             / i:integer() { Literal::Integer(i) }
             / b:boolean() { Literal::Boolean(b) }
             / t:text() { Literal::Text(t) }
-            / a:account_id() { Literal::Account(a) }
+            / a:account_id() { Literal::Account(a) }            
+            / pr:real() "%" { Literal::Percentage(pr) }            
+            / pi:integer() "%" { Literal::Percentage(pi as f64) }            
             / kw_null() { Literal::Null }
 
 
         rule ledger_operation() -> LedgerOperation
-            = kw_debit() __+ account:account_id() __+ amount:expression()? { LedgerOperation::Debit(LedgerOperationData { account, amount }) }
-            / kw_credit() __+ account:account_id() __+ amount:expression()? { LedgerOperation::Credit(LedgerOperationData { account, amount }) }
+            = kw_debit() __+ account:account_id() __* amount:expression()? { LedgerOperation::Debit(LedgerOperationData { account, amount }) }
+            / kw_credit() __+ account:account_id() __* amount:expression()? { LedgerOperation::Credit(LedgerOperationData { account, amount }) }
 
         rule ledger_operations() -> Vec<LedgerOperation>
-            = ledger_operations:(ledger_operation() ** (__+)) { ledger_operations }
+            = ledger_operations:(ledger_operation() ** (__* "|" __*)) { ledger_operations }
             
         rule projection_expression() -> Expression
             = z:expression() _* kw_as() _* a:ident() { UnaryExpression::alias(z, a) }
@@ -156,14 +160,15 @@ peg::parser! {
                 --
                 e:(@) __+ kw_is() _+ kw_null() { UnaryExpression::is_null(e) }
                 e:(@) __+ kw_is() _+ kw_not() _+ kw_null() { UnaryExpression::is_not_null(e) }
+                kw_with() __+ kw_rate() __+ r:ident() { UnaryExpression::rate(r) }
                 kw_case() __* mtch:expression()? __* when:when_expression()+ __* else_:else_expression()? __* kw_end() { CaseExpression::case(mtch, when, else_) }
                 kw_case() __* when:when_expression()+ __* else_:else_expression()? __* kw_end() { CaseExpression::case(None, when, else_) }
                 "$" name:ident() { UnaryExpression::parameter(name) }
                 l:literal() { UnaryExpression::literal(l) }
                 p:property() { UnaryExpression::property(p.0, p.1) }
                 pos: position!() func:ident() _* "(" __* params:expression() ** (_* "," _*) __* ")" { FunctionExpression::function(func, params, pos ) }
-                i:ident() { UnaryExpression::ident(i) }
-                kw_balance() __+ account_id:account_id() __+ date:expression() __+ dimension:dimension() { BalanceExpression::balance(account_id, date, Some(dimension)) }
+                dim:dimension() { UnaryExpression::dimension(dim.0, dim.1) }
+                i:ident() { UnaryExpression::ident(i) }                
                 --
                 
                 "(" __* c:expression() __* ")" { c }
@@ -174,7 +179,7 @@ peg::parser! {
             = ident:$(alpha()alpha_num()*) { Arc::from(ident) }
 
         rule account_id() -> Arc<str>
-            = ident:$(alpha()alpha_num()*) { Arc::from(ident) }
+            = "@" ident:$(alpha()alpha_num()*) { Arc::from(ident) }
 
         rule property() -> (Arc<str>, Arc<str>)
             = name:ident() "." key:ident() { (name, key) }
@@ -210,16 +215,32 @@ peg::parser! {
                 } 
             }
 
+        rule rate() -> CreateRateExpression
+            = kw_rate() __* id:ident() { 
+                CreateRateExpression { 
+                    id,
+                } 
+            }
+
+        rule set_command() -> SetCommand
+            = kw_set() __+ kw_rate() __+ id:ident() __+ rate:expression() __+ date:expression() { SetCommand::Rate(SetRateExpression { 
+                id, 
+                date, 
+                rate
+            })}
+
         rule create_command() -> CreateCommand
             = kw_create() __* journal:journal()  { CreateCommand::Journal(journal) }
             / kw_create() __* account:account()  { CreateCommand::Account(account) }
+            / kw_create() __* rate:rate()  { CreateCommand::Rate(rate) }
         
         pub rule statement() -> Statement
             = c:create_command() { Statement::Create(c) }
-            / kw_get() __+ e:expression() ** (__* "," __*) { Statement::Get(GetExpression::get(e)) }
+            / kw_get() __+ e:projection_expression() ** (__* "," __*) { Statement::Get(GetExpression::get(e)) }
+            / s:set_command() { Statement::Set(s) }
 
         pub rule statements() -> Vec<Statement>
-            = s:statement() ** (_* ";" _*) __* ";"? { s }
+            = s:statement() ** (__* ";" __*) __* ";"? { s }
 
     }
 }

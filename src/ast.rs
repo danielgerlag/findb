@@ -11,6 +11,7 @@ use crate::models::DataValue;
 pub enum Statement{
     Create(CreateCommand),
     Get(GetExpression),
+    Set(SetCommand),
     Accrue,
 }
 
@@ -18,7 +19,12 @@ pub enum Statement{
 pub enum CreateCommand {
     Account(AccountExpression),
     Journal(JournalExpression),
-    Rate,
+    Rate(CreateRateExpression),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SetCommand {
+    Rate(SetRateExpression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +64,18 @@ pub struct AccountExpression {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CreateRateExpression {
+    pub id: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetRateExpression {
+    pub id: Arc<str>,
+    pub date: Expression,
+    pub rate: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DimensionExpression {
     pub id: Arc<str>,
     pub value: Expression,
@@ -82,6 +100,7 @@ pub enum UnaryExpression {
     Identifier(Arc<str>),
     Alias { source: Box<Expression>, alias: Arc<str> },
     DimensionExpression(Box<DimensionExpression>),
+    Rate(Arc<str>),
 }
 
 impl UnaryExpression {
@@ -120,6 +139,10 @@ impl UnaryExpression {
     pub fn dimension(id: Arc<str>, value: Expression) -> Expression {
         Expression::UnaryExpression(Self::DimensionExpression(Box::new(DimensionExpression { id, value })))
     }
+
+    pub fn rate(id: Arc<str>) -> Expression {
+        Expression::UnaryExpression(Self::Rate(id))
+    }
 }
 
 
@@ -132,6 +155,7 @@ pub enum Literal {
     Boolean(bool),
     Text(Arc<str>),
     Account(Arc<str>),
+    Percentage(f64),
     Null,
 }
 
@@ -226,7 +250,7 @@ pub enum VariadicExpression {
     FunctionExpression(FunctionExpression),
     CaseExpression(CaseExpression),
     ListExpression(ListExpression),
-    BalanceExpression(BalanceExpression),
+
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -287,20 +311,3 @@ impl GetExpression {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct BalanceExpression {
-    pub account_id: Arc<str>,
-    pub date: Box<Expression>,
-    pub dimension: Box<Option<(Arc<str>, Expression)>>,
-}
-
-impl BalanceExpression {
-  pub fn balance(account_id: Arc<str>, date: Expression, dimension: Option<(Arc<str>, Expression)>) -> Expression {
-    Expression::VariadicExpression(VariadicExpression::BalanceExpression(
-        BalanceExpression { 
-            account_id, 
-            date: Box::new(date), 
-            dimension: Box::new(dimension) 
-        }))
-  }
-}

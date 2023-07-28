@@ -3,7 +3,7 @@ use std::{sync::Arc, collections::BTreeMap};
 use serde::__private::de;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, LedgerOperationData, self, AccountExpression, GetExpression}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, LedgerOperationData, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
@@ -35,7 +35,7 @@ impl ExecutionResult {
 
 impl Into<ExpressionEvaluationContext> for &ExecutionContext {
     fn into(self) -> ExpressionEvaluationContext {
-        ExpressionEvaluationContext::new(Some(self.effective_date), self.variables.clone())
+        ExpressionEvaluationContext::new(self.effective_date, self.variables.clone())
     }
 }
 
@@ -57,10 +57,13 @@ impl StatementExecutor {
             Statement::Create(c) => match c {
                 CreateCommand::Account(a) => self.create_account(context, a)?,
                 CreateCommand::Journal(j) => self.create_journal(context, j)?,
-                CreateCommand::Rate => todo!(),
+                CreateCommand::Rate(r) => self.create_rate(context, r)?,
             },
             Statement::Get(get) => self.get(context, get)?,
             Statement::Accrue => todo!(),
+            Statement::Set(s) => match s {
+                SetCommand::Rate(r) => self.set_rate(context, r)?,
+            },
         })
     }
 
@@ -136,7 +139,7 @@ impl StatementExecutor {
         };
 
         self.storage.create_journal(&command)?;
-
+        log::debug!("Created journal: {:?}", command);
         Ok(ExecutionResult::new())
     }
 
@@ -145,9 +148,47 @@ impl StatementExecutor {
 
         self.storage.create_account(account)?;
 
+        log::debug!("Created account: {:?}", account);
+
         Ok(ExecutionResult::new())
     }
 
+    fn create_rate(&self, context: &ExecutionContext, rate: &CreateRateExpression) -> Result<ExecutionResult, EvaluationError> {
+        let cmd = CreateRateCommand {
+            id: rate.id.clone(),
+        };
+        self.storage.create_rate(&cmd)?;
+        log::debug!("Created rate: {:?}", rate);
+
+        Ok(ExecutionResult::new())
+    }
+
+    fn set_rate(&self, context: &ExecutionContext, rate: &SetRateExpression) -> Result<ExecutionResult, EvaluationError> {
+        let mut eval_ctx : ExpressionEvaluationContext = context.into();
+
+        let date = match self.expression_evaluator.evaluate_expression(&eval_ctx, &rate.date)? {
+            DataValue::Date(d) => d,
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        eval_ctx.set_effective_date(date);
+
+        let cmd = SetRateCommand {
+            id: rate.id.clone(),
+            date,
+            rate: match self.expression_evaluator.evaluate_expression(&eval_ctx, &rate.rate)? {
+                DataValue::Money(d) => d.0,
+                DataValue::Int(i) => i as f64,
+                DataValue::Percentage(p) => p.0,
+                _ => return Err(EvaluationError::InvalidType),
+            },
+        };
+        self.storage.set_rate(&cmd)?;
+        log::debug!("Set rate: {:?}", rate);
+
+        Ok(ExecutionResult::new())
+    }
+    
     fn get(&self, context: &ExecutionContext, get: &GetExpression) -> Result<ExecutionResult, EvaluationError> {
         let eval_ctx : ExpressionEvaluationContext = context.into();
         let mut result = ExecutionResult::new();
