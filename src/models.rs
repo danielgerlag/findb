@@ -13,10 +13,12 @@ pub enum DataValue {
     Int(i64),
     Money(OrderedFloat<f64>),
     Percentage(OrderedFloat<f64>),
-    String(String),
+    String(Arc<str>),
     Date(Date),
     List(Vec<DataValue>),
     Map(BTreeMap<Arc<str>, DataValue>),
+    AccountId(Arc<str>),
+    Dimension((Arc<str>, Arc<DataValue>)),
 }
 
 impl DataValue {
@@ -28,10 +30,10 @@ impl DataValue {
     }
 }
 
-pub enum AccountType {
-    Asset,
-    Liability,
-    Equity,
-    Income,
-    Expense,
-}
+// pub enum AccountType {
+//     Asset,
+//     Liability,
+//     Equity,
+//     Income,
+//     Expense,
+// }

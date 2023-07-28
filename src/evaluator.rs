@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc, ops::Add};
 use ordered_float::OrderedFloat;
 use time::Date;
 
-use crate::{ast, models::DataValue, storage::StorageError};
+use crate::{ast, models::DataValue, storage::StorageError, function_registry::{FunctionRegistry, Function}};
 
 
 
@@ -13,6 +13,7 @@ pub enum EvaluationError {
     InvalidType,
     UnknownIdentifier(String),
     UnknownFunction(String),
+    InvalidArgument(String),
     InvalidArgumentCount(String),
     StorageError(StorageError),
 }
@@ -66,12 +67,15 @@ impl ExpressionEvaluationContext {
 }
 
 pub struct ExpressionEvaluator {
+    function_registry: Arc<FunctionRegistry>,
 }
 
 impl ExpressionEvaluator {
 
-    pub fn new() -> ExpressionEvaluator {
-        ExpressionEvaluator {  }
+    pub fn new(function_registry: Arc<FunctionRegistry>) -> ExpressionEvaluator {
+        ExpressionEvaluator {  
+            function_registry,
+        }
     }
 
     pub fn evaluate_expression(
@@ -86,7 +90,10 @@ impl ExpressionEvaluator {
             ast::Expression::BinaryExpression(expression) => {
                 self.evaluate_binary_expression(context, expression)
             }
-            _ => todo!(),
+            ast::Expression::VariadicExpression(expression) => {
+                self.evaluate_variadic_expression(context, expression)
+            },
+            
         }
     }
 
@@ -140,11 +147,13 @@ impl ExpressionEvaluator {
             ast::UnaryExpression::IsNotNull(e) => DataValue::Bool(!self.evaluate_expression(context, e)?.is_null()),
             ast::UnaryExpression::Literal(l) => match l {
                 ast::Literal::Boolean(b) => DataValue::Bool(*b),
-                ast::Literal::Text(t) => DataValue::String(t.to_string()),
+                ast::Literal::Text(t) => DataValue::String(t.clone()),
                 ast::Literal::Null => DataValue::Null,
                 ast::Literal::Integer(i) => DataValue::Int(*i),
                 ast::Literal::Real(r) => DataValue::Money(OrderedFloat::from(*r)),
                 ast::Literal::Date(d) => DataValue::Date(*d),
+                ast::Literal::Account(a) => DataValue::AccountId(a.clone()),
+                
                 
             },
             ast::UnaryExpression::Property { name, key } => match context.get_variable(name) {
@@ -168,6 +177,10 @@ impl ExpressionEvaluator {
                 Some(value) => value.clone(),
                 None => return Err(EvaluationError::UnknownIdentifier(ident.to_string())),
             },
+            ast::UnaryExpression::DimensionExpression(d) => {
+                let value = self.evaluate_expression(context, &d.value)?;
+                DataValue::Dimension((d.id.clone(), Arc::new(value)))
+            }
         };
         Ok(result)
     }
@@ -256,10 +269,10 @@ impl ExpressionEvaluator {
                     (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 + n2 as f64),
                     //(QueryValue::Date(d1), QueryValue::Date(d2)) => QueryValue::Date(d1.add(d2)),
 
-                    (DataValue::Int(n1), DataValue::String(s2)) => DataValue::String(n1.to_string() + &s2),
-                    (DataValue::String(s1), DataValue::Bool(b2)) => DataValue::String(s1 + &b2.to_string()),
-                    (DataValue::String(s1), DataValue::Int(n2)) => DataValue::String(s1 + &n2.to_string()),
-                    (DataValue::String(s1), DataValue::String(s2)) => DataValue::String(s1 + &s2),
+                    (DataValue::Int(n1), DataValue::String(s2)) => DataValue::String(Arc::from(n1.to_string() + &s2)),
+                    (DataValue::String(s1), DataValue::Bool(b2)) => DataValue::String(Arc::from(s1.to_string() + &b2.to_string())),
+                    (DataValue::String(s1), DataValue::Int(n2)) => DataValue::String(Arc::from(s1.to_string() + &n2.to_string())),
+                    (DataValue::String(s1), DataValue::String(s2)) => DataValue::String(Arc::from(s1.to_string() + &s2)),
                     _ => DataValue::Null,
                 }
             }
@@ -323,6 +336,17 @@ impl ExpressionEvaluator {
         Ok(result)
     }
 
+    fn evaluate_variadic_expression(&self, context: &ExpressionEvaluationContext, expression: &ast::VariadicExpression) -> Result<DataValue, EvaluationError> {
+        match expression {
+            ast::VariadicExpression::FunctionExpression(func) => {
+                self.evaluate_function_expression(context, func)
+            },
+            ast::VariadicExpression::CaseExpression(_) => todo!(),
+            ast::VariadicExpression::ListExpression(_) => todo!(),
+            ast::VariadicExpression::BalanceExpression(_) => todo!(),
+        }
+    }
+
     fn evaluate_function_expression(
         &self,
         context: &ExpressionEvaluationContext,
@@ -332,8 +356,19 @@ impl ExpressionEvaluator {
         for arg in &expression.args {
             values.push(self.evaluate_expression(context, arg)?);
         }
+        
+        let result = match self.function_registry.get_function(&expression.name) {
+            Some(function) => match function.as_ref() {
+                Function::Scalar(scalar) => scalar.call(context, values)?,
+            },
+            None => {
+                return Err(EvaluationError::UnknownFunction(
+                    expression.name.to_string(),
+                ))
+            }
+        };
 
-        todo!()
+        Ok(result)
     }
 
     fn evaluate_case_expression(

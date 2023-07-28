@@ -2,19 +2,21 @@ use std::{sync::Arc, collections::BTreeMap};
 
 use time::Date;
 
+use crate::models::DataValue;
+
 
 
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement{
     Create(CreateCommand),
-    Select,
+    Get(GetExpression),
     Accrue,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CreateCommand {
-    Account,
+    Account(AccountExpression),
     Journal(JournalExpression),
     Rate,
 }
@@ -41,6 +43,27 @@ pub struct JournalExpression {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum AccountType {
+    Asset,
+    Liability,
+    Equity,
+    Income,
+    Expense,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountExpression {
+    pub id: Arc<str>,
+    pub account_type: AccountType,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DimensionExpression {
+    pub id: Arc<str>,
+    pub value: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     UnaryExpression(UnaryExpression),
     BinaryExpression(BinaryExpression),
@@ -58,6 +81,7 @@ pub enum UnaryExpression {
     Parameter(Arc<str>),
     Identifier(Arc<str>),
     Alias { source: Box<Expression>, alias: Arc<str> },
+    DimensionExpression(Box<DimensionExpression>),
 }
 
 impl UnaryExpression {
@@ -92,6 +116,10 @@ impl UnaryExpression {
     pub fn is_not_null(expr: Expression) -> Expression {
         Expression::UnaryExpression(Self::IsNotNull(Box::new(expr)))
     }
+
+    pub fn dimension(id: Arc<str>, value: Expression) -> Expression {
+        Expression::UnaryExpression(Self::DimensionExpression(Box::new(DimensionExpression { id, value })))
+    }
 }
 
 
@@ -103,6 +131,7 @@ pub enum Literal {
     Real(f64),
     Boolean(bool),
     Text(Arc<str>),
+    Account(Arc<str>),
     Null,
 }
 
@@ -193,9 +222,11 @@ impl BinaryExpression {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VariadicExpression {
+    //GetExpression(GetExpression),
     FunctionExpression(FunctionExpression),
     CaseExpression(CaseExpression),
     ListExpression(ListExpression),
+    BalanceExpression(BalanceExpression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -242,5 +273,34 @@ pub struct ListExpression {
 impl ListExpression {
   pub fn list(elements: Vec<Expression>) -> Expression {
     Expression::VariadicExpression(VariadicExpression::ListExpression(ListExpression{ elements }))
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GetExpression {
+    pub elements : Vec<Expression>,
+}
+
+impl GetExpression {
+  pub fn get(elements: Vec<Expression>) -> GetExpression {
+    GetExpression{ elements }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BalanceExpression {
+    pub account_id: Arc<str>,
+    pub date: Box<Expression>,
+    pub dimension: Box<Option<(Arc<str>, Expression)>>,
+}
+
+impl BalanceExpression {
+  pub fn balance(account_id: Arc<str>, date: Expression, dimension: Option<(Arc<str>, Expression)>) -> Expression {
+    Expression::VariadicExpression(VariadicExpression::BalanceExpression(
+        BalanceExpression { 
+            account_id, 
+            date: Box::new(date), 
+            dimension: Box::new(dimension) 
+        }))
   }
 }

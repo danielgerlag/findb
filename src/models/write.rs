@@ -11,7 +11,7 @@ pub struct CreateJournalCommand {
     pub description: Arc<str>,    
     pub amount: f64,
     pub ledger_entries: Vec<LedgerEntryCommand>,
-    pub dimensions: BTreeMap<Arc<str>, DataValue>,
+    pub dimensions: BTreeMap<Arc<str>, Arc<DataValue>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,3 +19,10 @@ pub enum LedgerEntryCommand {
     Debit {account_id: Arc<str>, amount: f64},
     Credit {account_id: Arc<str>, amount: f64},
 }
+
+
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct CreateAccountCommand {
+//     pub id: Arc<str>,    
+    
+// }

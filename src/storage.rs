@@ -3,7 +3,7 @@ use std::{collections::{BTreeMap, HashMap}, sync::{Arc, RwLock}, ops::Bound};
 use time::Date;
 use uuid::Uuid;
 
-use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand}, AccountType, DataValue, read::JournalEntry}, evaluator::EvaluationError};
+use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand}, DataValue, read::JournalEntry}, evaluator::EvaluationError, ast::{AccountExpression, AccountType}};
 
 
 #[derive(Debug)]
@@ -26,9 +26,9 @@ impl Storage {
         }
     }
 
-    pub fn create_account(&self, account_id: Arc<str>, account_type: AccountType) -> Result<(), StorageError> {
+    pub fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError> {
         let mut ledger_accounts = self.ledger_accounts.write().unwrap();
-        ledger_accounts.insert(account_id, LedgerStore::new(account_type));
+        ledger_accounts.insert(account.id.clone(), LedgerStore::new(account.account_type.clone()));
         Ok(())
     }
 
@@ -63,7 +63,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_balance(&self, account_id: &str, date: Date, dimension: &(Arc<str>, DataValue)) -> f64 {
+    pub fn get_balance(&self, account_id: &str, date: Date, dimension: &(Arc<str>, Arc<DataValue>)) -> f64 {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         ledger_accounts.get(account_id).unwrap().get_balance(date, dimension)
     }
@@ -89,7 +89,7 @@ impl LedgerStore {
         }
     }
 
-    pub fn add_entry(&mut self, date: Date, journal_id: u128, amount: f64, dimensions: &BTreeMap<Arc<str>, DataValue>) {
+    pub fn add_entry(&mut self, date: Date, journal_id: u128, amount: f64, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) {
         let amount = match self.account_type {
             AccountType::Asset | AccountType::Expense => amount,
             AccountType::Liability | AccountType::Equity | AccountType::Income => -amount,
@@ -105,7 +105,7 @@ impl LedgerStore {
         
     }
 
-    pub fn get_balance(&self, date: Date, dimension: &(Arc<str>, DataValue)) -> f64 {        
+    pub fn get_balance(&self, date: Date, dimension: &(Arc<str>, Arc<DataValue>)) -> f64 {        
         let mut balance = 0.0;
         let mut days = self.days.range((Bound::Unbounded, Bound::Excluded(date)));
         while let Some((_, day)) = days.next_back() {
@@ -119,7 +119,7 @@ impl LedgerStore {
 
 #[derive(Debug, Clone)]
 struct LedgerDay {
-    sum_by_dimension: HashMap<(Arc<str>, DataValue), f64>,
+    sum_by_dimension: HashMap<(Arc<str>, Arc<DataValue>), f64>,
     //accumulated_sum_by_dimension: HashMap<(Arc<str>, DataValue), f64>,
     entries: Vec<LedgerEntry>,
 }
@@ -133,7 +133,7 @@ impl LedgerDay {
         }
     }
 
-    pub fn add_entry(&mut self, journal_id: u128, amount: f64, dimensions: &BTreeMap<Arc<str>, DataValue>) {
+    pub fn add_entry(&mut self, journal_id: u128, amount: f64, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) {
         let entry = LedgerEntry {
             journal_id,
             amount,
@@ -144,7 +144,7 @@ impl LedgerDay {
         
     }
 
-    pub fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, DataValue>, amount: f64) {
+    pub fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>, amount: f64) {
         for (dimension, value) in dimensions {
             let sum = self.sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
             *sum += amount;
@@ -154,7 +154,7 @@ impl LedgerDay {
         }
     }
 
-    pub fn get_balance(&self, dimension: &(Arc<str>, DataValue)) -> f64 {
+    pub fn get_balance(&self, dimension: &(Arc<str>, Arc<DataValue>)) -> f64 {
         *self.sum_by_dimension.get(dimension).unwrap_or(&0.0)
     }
 }

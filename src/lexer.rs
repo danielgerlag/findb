@@ -14,11 +14,20 @@ peg::parser! {
         //use ast::
 
         rule kw_select()    = ("SELECT" / "select")
+        rule kw_get()       = ("GET" / "get")
         rule kw_create()    = ("CREATE" / "create")
         rule kw_journal()   = ("JOURNAL" / "journal")
+        rule kw_account()   = ("ACCOUNT" / "account")
+        rule kw_balance()   = ("BALANCE" / "balance")
 
         rule kw_debit()     = ("DEBIT" / "debit")
         rule kw_credit()    = ("CREDIT" / "credit")
+
+        rule kw_asset()     = ("ASSET" / "asset")
+        rule kw_liability() = ("LIABILITY" / "liability")
+        rule kw_income()    = ("INCOME" / "income")
+        rule kw_expense()   = ("EXPENSE" / "expense")
+        rule kw_equity()    = ("EQUITY" / "equity")
 
         rule kw_for()       = ("FOR" / "for")
         
@@ -99,12 +108,13 @@ peg::parser! {
             / i:integer() { Literal::Integer(i) }
             / b:boolean() { Literal::Boolean(b) }
             / t:text() { Literal::Text(t) }
+            / a:account_id() { Literal::Account(a) }
             / kw_null() { Literal::Null }
 
 
         rule ledger_operation() -> LedgerOperation
-            = kw_debit() __+ account:ident() __+ amount:expression()? { LedgerOperation::Debit(LedgerOperationData { account, amount }) }
-            / kw_credit() __+ account:ident() __+ amount:expression()? { LedgerOperation::Credit(LedgerOperationData { account, amount }) }
+            = kw_debit() __+ account:account_id() __+ amount:expression()? { LedgerOperation::Debit(LedgerOperationData { account, amount }) }
+            / kw_credit() __+ account:account_id() __+ amount:expression()? { LedgerOperation::Credit(LedgerOperationData { account, amount }) }
 
         rule ledger_operations() -> Vec<LedgerOperation>
             = ledger_operations:(ledger_operation() ** (__+)) { ledger_operations }
@@ -153,6 +163,7 @@ peg::parser! {
                 p:property() { UnaryExpression::property(p.0, p.1) }
                 pos: position!() func:ident() _* "(" __* params:expression() ** (_* "," _*) __* ")" { FunctionExpression::function(func, params, pos ) }
                 i:ident() { UnaryExpression::ident(i) }
+                kw_balance() __+ account_id:account_id() __+ date:expression() __+ dimension:dimension() { BalanceExpression::balance(account_id, date, Some(dimension)) }
                 --
                 
                 "(" __* c:expression() __* ")" { c }
@@ -162,12 +173,18 @@ peg::parser! {
         rule ident() -> Arc<str>
             = ident:$(alpha()alpha_num()*) { Arc::from(ident) }
 
+        rule account_id() -> Arc<str>
+            = ident:$(alpha()alpha_num()*) { Arc::from(ident) }
+
         rule property() -> (Arc<str>, Arc<str>)
             = name:ident() "." key:ident() { (name, key) }
 
         rule dimensions() -> BTreeMap<Arc<str>, Expression>
-            = x:(name:ident() __* "=" __* value:expression() __* { (name, value) }) ** (__* "," __*) { x.into_iter().collect() }
+            = x:dimension() ** (__* "," __*) { x.into_iter().collect() }
         
+        rule dimension() -> (Arc<str>, Expression)
+            = x:(name:ident() __* "=" __* value:expression() __* { (name, value) })
+
         rule journal() -> JournalExpression
             = kw_journal() __* date:expression() __* "," __* amount:expression() __* "," __* description:expression() __* dims:(kw_for() __+ dims:dimensions() {dims})? __* ops:ledger_operations() { JournalExpression {
                     date,
@@ -178,11 +195,28 @@ peg::parser! {
                 } 
             }
 
+        rule account_type() -> AccountType
+            = kw_asset() { AccountType::Asset }
+            / kw_liability() { AccountType::Liability }
+            / kw_income() { AccountType::Income }
+            / kw_expense() { AccountType::Expense }
+            / kw_equity() { AccountType::Equity }
+        
+        rule account() -> AccountExpression
+            = kw_account() __* id:account_id() __+ account_type:account_type()  { 
+                AccountExpression { 
+                    id, 
+                    account_type,
+                } 
+            }
+
         rule create_command() -> CreateCommand
             = kw_create() __* journal:journal()  { CreateCommand::Journal(journal) }
+            / kw_create() __* account:account()  { CreateCommand::Account(account) }
         
         pub rule statement() -> Statement
             = c:create_command() { Statement::Create(c) }
+            / kw_get() __+ e:expression() ** (__* "," __*) { Statement::Get(GetExpression::get(e)) }
 
         pub rule statements() -> Vec<Statement>
             = s:statement() ** (_* ";" _*) __* ";"? { s }

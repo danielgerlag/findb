@@ -3,12 +3,34 @@ use std::{sync::Arc, collections::BTreeMap};
 use serde::__private::de;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, LedgerOperationData, self}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, LedgerOperationData, self, AccountExpression, GetExpression}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
     pub effective_date: Date,
     pub variables: QueryVariables,
+}
+
+impl ExecutionContext {
+    pub fn new(effective_date: Date, variables: QueryVariables) -> Self {
+        Self {
+            effective_date,
+            variables,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutionResult {
+    pub variables: QueryVariables,
+}
+
+impl ExecutionResult {
+    pub fn new() -> Self {
+        Self {
+            variables: QueryVariables::new(),
+        }
+    }
 }
 
 impl Into<ExpressionEvaluationContext> for &ExecutionContext {
@@ -30,21 +52,19 @@ impl StatementExecutor {
         }
     }
 
-    pub fn execute(&self, context: &mut ExecutionContext, statement: &Statement) -> Result<(), EvaluationError> {
-        match statement {
+    pub fn execute(&self, context: &mut ExecutionContext, statement: &Statement) -> Result<ExecutionResult, EvaluationError> {
+        Ok(match statement {
             Statement::Create(c) => match c {
-                CreateCommand::Account => todo!(),
+                CreateCommand::Account(a) => self.create_account(context, a)?,
                 CreateCommand::Journal(j) => self.create_journal(context, j)?,
                 CreateCommand::Rate => todo!(),
             },
-            Statement::Select => todo!(),
+            Statement::Get(get) => self.get(context, get)?,
             Statement::Accrue => todo!(),
-        };
-
-        Ok(())
+        })
     }
 
-    fn create_journal(&self, context: &ExecutionContext, journal: &JournalExpression) -> Result<(), EvaluationError> {
+    fn create_journal(&self, context: &ExecutionContext, journal: &JournalExpression) -> Result<ExecutionResult, EvaluationError> {
         let mut eval_ctx : ExpressionEvaluationContext = context.into();
 
         let date = match self.expression_evaluator.evaluate_expression(&eval_ctx, &journal.date)? {
@@ -56,6 +76,7 @@ impl StatementExecutor {
         
         let journal_amount = match self.expression_evaluator.evaluate_expression(&eval_ctx, &journal.amount)? {
             DataValue::Money(d) => d.0,
+            DataValue::Int(i) => i as f64,
             _ => return Err(EvaluationError::InvalidType),
         };
         
@@ -69,7 +90,7 @@ impl StatementExecutor {
             dimensions: {
                 let mut dimensions = BTreeMap::new();
                 for (k, v) in journal.dimensions.iter() {
-                    dimensions.insert(k.clone(), self.expression_evaluator.evaluate_expression(&eval_ctx, v)?); 
+                    dimensions.insert(k.clone(), Arc::new(self.expression_evaluator.evaluate_expression(&eval_ctx, v)?)); 
                 }
                 dimensions
             },
@@ -83,6 +104,7 @@ impl StatementExecutor {
                                 amount: match &op.amount {
                                     Some(amount) => match self.expression_evaluator.evaluate_expression(&eval_ctx, &amount)? {
                                         DataValue::Money(d) => d.0,
+                                        DataValue::Int(i) => i as f64,
                                         DataValue::Percentage(p) => journal_amount * p.0,
                                         _ => return Err(EvaluationError::InvalidType),
                                     },
@@ -96,6 +118,7 @@ impl StatementExecutor {
                                 amount: match &op.amount {
                                     Some(amount) => match self.expression_evaluator.evaluate_expression(&eval_ctx, &amount)? {
                                         DataValue::Money(d) => d.0,
+                                        DataValue::Int(i) => i as f64,
                                         DataValue::Percentage(p) => journal_amount * p.0,
                                         _ => return Err(EvaluationError::InvalidType),
                                     },
@@ -114,8 +137,27 @@ impl StatementExecutor {
 
         self.storage.create_journal(&command)?;
 
-        Ok(())
+        Ok(ExecutionResult::new())
     }
 
+    fn create_account(&self, context: &ExecutionContext, account: &AccountExpression) -> Result<ExecutionResult, EvaluationError> {
+        //let mut eval_ctx : ExpressionEvaluationContext = context.into();
+
+        self.storage.create_account(account)?;
+
+        Ok(ExecutionResult::new())
+    }
+
+    fn get(&self, context: &ExecutionContext, get: &GetExpression) -> Result<ExecutionResult, EvaluationError> {
+        let eval_ctx : ExpressionEvaluationContext = context.into();
+        let mut result = ExecutionResult::new();
+
+        for expr in &get.elements {
+            let (key, value) = self.expression_evaluator.evaluate_projection_field(&eval_ctx, &expr)?;
+            result.variables.insert(key.into(), value);
+        }
+
+        Ok(result)
+    }
 }
 

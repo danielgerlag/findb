@@ -8,5 +8,5 @@ pub struct JournalEntry {
     pub date: Date,
     pub description: Arc<str>,
     pub amount: f64,
-    pub dimensions: BTreeMap<Arc<str>, DataValue>,
+    pub dimensions: BTreeMap<Arc<str>, Arc<DataValue>>,
 }
