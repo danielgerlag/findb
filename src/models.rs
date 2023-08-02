@@ -19,6 +19,7 @@ pub enum DataValue {
     Map(BTreeMap<Arc<str>, DataValue>),
     AccountId(Arc<str>),
     Dimension((Arc<str>, Arc<DataValue>)),
+    StatementLine(StatementTxn),
 }
 
 impl DataValue {
@@ -37,3 +38,13 @@ impl DataValue {
 //     Income,
 //     Expense,
 // }
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub struct StatementTxn {
+    pub journal_id: u128,
+    pub date: Date,
+    pub description: Arc<str>,
+    pub amount: OrderedFloat<f64>,
+    pub balance: OrderedFloat<f64>,
+
+}

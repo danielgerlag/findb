@@ -1,9 +1,10 @@
 use std::{collections::{BTreeMap, HashMap}, sync::{Arc, RwLock}, ops::Bound};
 
+use ordered_float::OrderedFloat;
 use time::Date;
 use uuid::Uuid;
 
-use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue, read::JournalEntry}, evaluator::EvaluationError, ast::{AccountExpression, AccountType}};
+use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue, read::JournalEntry, StatementTxn}, evaluator::EvaluationError, ast::{AccountExpression, AccountType}};
 
 
 #[derive(Debug)]
@@ -85,18 +86,45 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_balance(&self, account_id: &str, date: Date, dimension: Option<(Arc<str>, Arc<DataValue>)>) -> f64 {
+    pub fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> f64 {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         ledger_accounts.get(account_id).unwrap().get_balance(date, dimension)
+    }
+
+    pub fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<DataValue> {
+        let ledger_accounts = self.ledger_accounts.read().unwrap();
+        let acct = ledger_accounts.get(account_id).unwrap(); //.get_balance(date, dimension)
+        let entries = acct.get_statement(from, to, dimension);
+        drop(ledger_accounts);
+        let mut result = Vec::new();
+
+        let journals = self.journals.read().unwrap();
+
+        for e in entries {
+            match journals.get(&e.0) {
+                Some(j) => {
+                    result.push(DataValue::StatementLine(StatementTxn {
+                        journal_id: e.0,
+                        date: j.date,
+                        description: j.description.clone(),
+                        amount: OrderedFloat(e.1),
+                        balance: OrderedFloat(e.2),
+                    }));
+                },
+                None => {},
+            }
+        }
+
+        result
     }
 }
 
 
-#[derive(Debug, Clone)]
-struct LedgerEntry {
-    journal_id: u128,
-    amount: f64,
-}
+// #[derive(Debug, Clone)]
+// struct LedgerEntry {
+//     journal_id: u128,
+//     amount: f64,
+// }
 
 struct LedgerStore {
     account_type: AccountType,
@@ -127,10 +155,10 @@ impl LedgerStore {
         
     }
 
-    pub fn get_balance(&self, date: Date, dimension: Option<(Arc<str>, Arc<DataValue>)>) -> f64 {        
+    pub fn get_balance(&self, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> f64 {        
         let mut balance = 0.0;
         let mut days = self.days.range((Bound::Unbounded, Bound::Included(date)));
-        while let Some((_, day)) = days.next_back() {
+        while let Some((_, day)) = days.next() {
             match &dimension {
                 Some(dimension) => {
                     if let Some(sum) = day.sum_by_dimension.get(dimension) {
@@ -144,13 +172,37 @@ impl LedgerStore {
         }
         balance
     }
+
+    pub fn get_statement(&self, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<(u128, f64, f64)> {        
+        let mut result = Vec::new();
+        
+        let balance_date = match from {
+            Bound::Included(d) => d.previous_day().unwrap(),
+            Bound::Excluded(d) => d,
+            Bound::Unbounded => Date::MIN,
+        };
+
+        let mut balance = self.get_balance(balance_date, dimension);
+
+        let mut days = self.days.range((from, to));
+        while let Some((_, day)) = days.next() {
+            let entries = day.get_entries(dimension);
+            for (jid, amt) in entries {
+                balance += amt;
+                result.push((jid, amt, balance));
+            }
+        }
+
+        result
+    }
 }
 
 #[derive(Debug, Clone)]
 struct LedgerDay {
     sum_by_dimension: HashMap<(Arc<str>, Arc<DataValue>), f64>,
     total: f64,
-    entries: Vec<LedgerEntry>,
+    entries: HashMap<u128, f64>, // journal_id -> amount
+    entry_by_dimension: HashMap<(Arc<str>, Arc<DataValue>), Vec<u128>>,
 }
 
 impl LedgerDay {
@@ -158,22 +210,24 @@ impl LedgerDay {
         Self {
             sum_by_dimension: HashMap::new(),
             total: 0.0,
-            entries: Vec::new(),
+            entries: HashMap::new(),
+            entry_by_dimension: HashMap::new(),
         }
     }
 
     pub fn add_entry(&mut self, journal_id: u128, amount: f64, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) {
-        let entry = LedgerEntry {
-            journal_id,
-            amount,
-        };
         
-        self.entries.push(entry);
+        self.entries.insert(journal_id, amount);
+        for (k, v) in dimensions {
+            let e = self.entry_by_dimension.entry((k.clone(), v.clone())).or_insert(Vec::new());
+            e.push(journal_id);
+        }
+        
         self.increment_balance(dimensions, amount);
         
     }
 
-    pub fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>, amount: f64) {
+    fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>, amount: f64) {
         self.total += amount;
         for (dimension, value) in dimensions {
             let sum = self.sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
@@ -183,6 +237,33 @@ impl LedgerDay {
 
     pub fn get_balance(&self, dimension: &(Arc<str>, Arc<DataValue>)) -> f64 {
         *self.sum_by_dimension.get(dimension).unwrap_or(&0.0)
+    }
+
+    pub fn get_entries(&self, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<(u128, f64)> {
+        let mut result = Vec::new();
+
+        match dimension {
+            Some(dimension) => {
+                match self.entry_by_dimension.get(dimension) {
+                    Some(jids) => {
+                        for jid in jids {
+                            match self.entries.get(jid) {
+                                Some(amt) => result.push((*jid, *amt)),
+                                None => {},
+                            }
+                        }
+                    },
+                    None => {},
+                };
+            },
+            None => {
+                for (jid, amt) in self.entries.iter() {
+                    result.push((*jid, *amt));
+                }
+            },
+        }
+        
+        result
     }
 }
 

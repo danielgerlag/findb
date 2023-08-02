@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use functions::Statement;
 use models::DataValue;
 use time::{Date, Month};
 
@@ -21,6 +22,7 @@ fn main() {
     let storage = Arc::new(Storage::new());
     let function_registry = FunctionRegistry::new();
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
+    function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
 
@@ -33,12 +35,21 @@ fn main() {
     SET RATE prime 0.05 2023-01-01;
     SET RATE prime 0.2 2023-06-01;
     
+
+    CREATE JOURNAL 
+        2023-05-10, 75, 'Test11'
+    FOR
+        Customer='John Doe',
+        Region='US'
+    CREDIT @bank,
+    DEBIT @cash;
+
     CREATE JOURNAL 
         2023-05-15, 100, 'Test'
     FOR
         Customer='John Doe',
         Region='US'
-    DEBIT @bank|
+    DEBIT @bank,
     CREDIT @cash 100;
 
     CREATE JOURNAL 
@@ -46,15 +57,17 @@ fn main() {
     FOR
         Customer='Frank Doe',
         Region='US'
-    DEBIT @bank WITH RATE prime |
+    DEBIT @bank WITH RATE prime,
     CREDIT @cash 50;
 
-    GET 
-        balance(@bank, $date, Customer='Frank Doe') AS Frank,
-        balance(@bank, $date, Customer='John Doe') AS John,
-        balance(@bank, $date, Region='US') AS US,
-        balance(@bank, $date) AS Total
+    GET statement(@bank, 2023-05-01, 2023-06-01, Region='US') as John
     ";
+    // "GET 
+    //     balance(@bank, $date, Customer='Frank Doe') AS Frank,
+    //     balance(@bank, $date, Customer='John Doe') AS John,
+    //     balance(@bank, $date, Region='US') AS US,
+    //     balance(@bank, $date) AS Total
+    // ";
     
     let statements = lexer::parse(query).unwrap();
     

@@ -121,7 +121,7 @@ peg::parser! {
             / kw_credit() __+ account:account_id() __* amount:expression()? { LedgerOperation::Credit(LedgerOperationData { account, amount }) }
 
         rule ledger_operations() -> Vec<LedgerOperation>
-            = ledger_operations:(ledger_operation() ** (__* "|" __*)) { ledger_operations }
+            = ledger_operations:(ledger_operation() ** (__* "," __*)) { ledger_operations }
             
         rule projection_expression() -> Expression
             = z:expression() _* kw_as() _* a:ident() { UnaryExpression::alias(z, a) }
