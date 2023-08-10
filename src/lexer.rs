@@ -21,6 +21,11 @@ peg::parser! {
         rule kw_account()   = ("ACCOUNT" / "account")
         rule kw_balance()   = ("BALANCE" / "balance")
         rule kw_rate()      = ("RATE" / "rate")
+        rule kw_accrue()    = ("ACCRUE" / "accrue")
+
+        rule kw_compound()  = ("COMPOUND" / "compound")
+        rule kw_daily()     = ("DAILY" / "daily")
+        rule kw_continuous() = ("CONTINUOUS" / "continuous")
 
         rule kw_debit()     = ("DEBIT" / "debit")
         rule kw_credit()    = ("CREDIT" / "credit")
@@ -32,6 +37,10 @@ peg::parser! {
         rule kw_equity()    = ("EQUITY" / "equity")
 
         rule kw_for()       = ("FOR" / "for")
+        rule kw_from()      = ("FROM" / "from")
+        rule kw_to()        = ("TO" / "to")
+        rule kw_by()        = ("BY" / "by")
+        rule kw_into()      = ("INTO" / "into")
         
         rule kw_delete()    = ("DELETE" / "delete")
         rule kw_where()     = ("WHERE" / "where")
@@ -200,6 +209,14 @@ peg::parser! {
                 } 
             }
 
+        rule into_journal() -> IntoJournalExpression
+            = kw_into() __+ kw_journal() __+ date:expression() __* "," __* description:expression() __* ops:ledger_operations() { IntoJournalExpression {
+                    date,
+                    description,
+                    operations: ops,
+                } 
+            }
+
         rule account_type() -> AccountType
             = kw_asset() { AccountType::Asset }
             / kw_liability() { AccountType::Liability }
@@ -222,6 +239,25 @@ peg::parser! {
                 } 
             }
 
+        rule compound() -> Compounding
+            = kw_compound() __+ kw_daily() { Compounding::Daily }
+            / kw_compound() __+ kw_continuous() { Compounding::Continuous }
+
+
+        rule accrue_command() -> AccrueCommand
+            = kw_accrue() __+ account_id:account_id() __+ kw_from() __+ start_date:expression() __+ kw_to() __+ end_date:expression() __+ kw_with() __+ kw_rate() __+ rate_id:ident() __* compounding:compound()? __* kw_by() __+ by_dimension:ident() __+ into_journal:into_journal() { 
+                AccrueCommand {
+                    account_id,
+                    rate_id,
+                    compounding: compounding,
+                    start_date,
+                    end_date,
+                    by_dimension,
+                    into_journal,
+                } 
+            }
+            
+
         rule set_command() -> SetCommand
             = kw_set() __+ kw_rate() __+ id:ident() __+ rate:expression() __+ date:expression() { SetCommand::Rate(SetRateExpression { 
                 id, 
@@ -238,6 +274,7 @@ peg::parser! {
             = c:create_command() { Statement::Create(c) }
             / kw_get() __+ e:projection_expression() ** (__* "," __*) { Statement::Get(GetExpression::get(e)) }
             / s:set_command() { Statement::Set(s) }
+            / a:accrue_command() { Statement::Accrue(a) }
 
         pub rule statements() -> Vec<Statement>
             = s:statement() ** (__* ";" __*) __* ";"? { s }

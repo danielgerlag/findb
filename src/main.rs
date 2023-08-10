@@ -29,44 +29,58 @@ fn main() {
 
     let query = 
     "CREATE ACCOUNT @bank ASSET;
-    CREATE ACCOUNT @cash ASSET;
+    CREATE ACCOUNT @loans ASSET;
+    CREATE ACCOUNT @interest_earned INCOME;
+    CREATE ACCOUNT @equity EQUITY;
+    
 
     CREATE RATE prime;
     SET RATE prime 0.05 2023-01-01;
-    SET RATE prime 0.2 2023-06-01;
+    
+    CREATE JOURNAL 
+        2023-01-01, 20000, 'Investment'
+    FOR
+        Investor='John Doe'
+    CREDIT @equity,
+    DEBIT @bank;
+
+    CREATE JOURNAL 
+        2023-02-01, 1000, 'Loan Issued'
+    FOR
+        Customer='John Doe',
+        Region='US'
+    DEBIT @loans,
+    CREDIT @bank;
+
+    CREATE JOURNAL 
+        2023-02-01, 500, 'Loan Issued'
+    FOR
+        Customer='Joe Soap',
+        Region='US'
+    DEBIT @loans,
+    CREDIT @bank;
+
+    ACCRUE @loans FROM 2023-02-01 TO 2023-02-28
+    WITH RATE prime COMPOUND DAILY
+    BY Customer
+    INTO JOURNAL
+        2023-03-01, 'Interest'
+    DEBIT @loans,
+    CREDIT @interest_earned;
     
 
-    CREATE JOURNAL 
-        2023-05-10, 75, 'Test11'
-    FOR
-        Customer='John Doe',
-        Region='US'
-    CREDIT @bank,
-    DEBIT @cash;
-
-    CREATE JOURNAL 
-        2023-05-15, 100, 'Test'
-    FOR
-        Customer='John Doe',
-        Region='US'
-    DEBIT @bank,
-    CREDIT @cash 100;
-
-    CREATE JOURNAL 
-        2023-05-17, 50, 'Test'
-    FOR
-        Customer='Frank Doe',
-        Region='US'
-    DEBIT @bank WITH RATE prime,
-    CREDIT @cash 50;
-
-    GET statement(@bank, 2023-05-01, 2023-06-01, Region='US') as John
+    GET 
+        statement(@loans, 2023-02-01, 2023-03-01, Customer='John Doe') as John,
+        statement(@loans, 2023-02-01, 2023-03-01, Customer='Joe Soap') as Joe,
+        balance(@loans, 2023-03-01) AS Total
     ";
     // "GET 
     //     balance(@bank, $date, Customer='Frank Doe') AS Frank,
     //     balance(@bank, $date, Customer='John Doe') AS John,
     //     balance(@bank, $date, Region='US') AS US,
     //     balance(@bank, $date) AS Total
+
+    //      statement(@bank, 2023-05-01, 2023-06-01, Region='US') as John,
     // ";
     
     let statements = lexer::parse(query).unwrap();

@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, HashMap}, sync::{Arc, RwLock}, ops::Bound};
+use std::{collections::{BTreeMap, HashMap, HashSet}, sync::{Arc, RwLock}, ops::Bound, hash::Hash};
 
 use ordered_float::OrderedFloat;
 use time::Date;
@@ -117,8 +117,15 @@ impl Storage {
 
         result
     }
-}
 
+    pub fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> HashSet<Arc<DataValue>> {
+        let ledger_accounts = self.ledger_accounts.read().unwrap();
+        let acct = ledger_accounts.get(account_id).unwrap();
+        let entries = acct.get_dimension_values(dimension_key, from, to);
+        drop(ledger_accounts);
+        entries
+    }
+}
 
 // #[derive(Debug, Clone)]
 // struct LedgerEntry {
@@ -161,9 +168,7 @@ impl LedgerStore {
         while let Some((_, day)) = days.next() {
             match &dimension {
                 Some(dimension) => {
-                    if let Some(sum) = day.sum_by_dimension.get(dimension) {
-                        balance += sum;
-                    }
+                    balance += day.get_balance(dimension);
                 },
                 None => {
                     balance += day.total;
@@ -195,11 +200,21 @@ impl LedgerStore {
 
         result
     }
+
+    pub fn get_dimension_values(&self, dimension_key: Arc<str>, from: Date, to: Date) -> HashSet<Arc<DataValue>> {
+        let mut result = HashSet::new();
+        let mut days = self.days.range((Bound::Included(from), Bound::Included(to)));
+        while let Some((_, day)) = days.next() {
+            let values = day.get_dimension_values(dimension_key.clone());
+            result.extend(values);
+        }
+        result
+    }
 }
 
 #[derive(Debug, Clone)]
 struct LedgerDay {
-    sum_by_dimension: HashMap<(Arc<str>, Arc<DataValue>), f64>,
+    sum_by_dimension: HashMap<Arc<str>, HashMap<Arc<DataValue>, f64>>,
     total: f64,
     entries: HashMap<u128, f64>, // journal_id -> amount
     entry_by_dimension: HashMap<(Arc<str>, Arc<DataValue>), Vec<u128>>,
@@ -230,13 +245,30 @@ impl LedgerDay {
     fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>, amount: f64) {
         self.total += amount;
         for (dimension, value) in dimensions {
-            let sum = self.sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
+            //let sum = self.sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
+            let sum = self.sum_by_dimension
+                .entry(dimension.clone())
+                .or_insert(HashMap::new())
+                .entry(value.clone())
+                .or_insert(0.0);
+        
             *sum += amount;
         }
     }
 
     pub fn get_balance(&self, dimension: &(Arc<str>, Arc<DataValue>)) -> f64 {
-        *self.sum_by_dimension.get(dimension).unwrap_or(&0.0)
+        *self.sum_by_dimension
+            .get(&dimension.0)
+            .unwrap_or(&HashMap::new())
+            .get(&dimension.1)
+            .unwrap_or(&0.0)
+    }
+
+    pub fn get_dimension_values(&self, dimension: Arc<str>) -> HashSet<Arc<DataValue>> {
+        match self.sum_by_dimension.get(&dimension) {
+            Some(d) => d.keys().cloned().collect(),
+            None => HashSet::new(),
+        }
     }
 
     pub fn get_entries(&self, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<(u128, f64)> {

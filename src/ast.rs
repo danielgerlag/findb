@@ -12,7 +12,7 @@ pub enum Statement{
     Create(CreateCommand),
     Get(GetExpression),
     Set(SetCommand),
-    Accrue,
+    Accrue(AccrueCommand),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +25,30 @@ pub enum CreateCommand {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SetCommand {
     Rate(SetRateExpression),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccrueCommand {
+    pub account_id: Arc<str>,
+    pub rate_id: Arc<str>,
+    pub compounding: Option<Compounding>,
+    pub start_date: Expression,
+    pub end_date: Expression,
+    pub by_dimension: Arc<str>,
+    pub into_journal: IntoJournalExpression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Compounding {
+    Continuous,
+    Daily,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntoJournalExpression {
+    pub date: Expression,
+    pub description: Expression,    
+    pub operations: Vec<LedgerOperation>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
