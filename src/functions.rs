@@ -2,7 +2,7 @@ use std::{sync::Arc, ops::Bound};
 
 use ordered_float::OrderedFloat;
 
-use crate::{function_registry::ScalarFunction, models::DataValue, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::Storage};
+use crate::{function_registry::ScalarFunction, models::{DataValue, BalanceSheetItem}, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::Storage};
 
 
 
@@ -81,6 +81,40 @@ impl ScalarFunction for Statement {
         };
 
         let result = self.storage.get_statement(&account_id, Bound::Included(*from), Bound::Included(*to), dimension);
+
+        Ok(DataValue::List(result))
+    }
+}
+
+pub struct BalanceSheet {
+    storage: Arc<Storage>,
+}
+
+impl BalanceSheet {
+    pub fn new(storage: Arc<Storage>) -> Self {
+        Self {
+            storage,
+        }
+    }
+}
+
+impl ScalarFunction for BalanceSheet {
+    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let effective_date = match args.get(0) {
+            Some(DataValue::Date(dt)) => dt,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let accounts = self.storage.list_accounts();
+        let mut result = Vec::new();
+        for (account_id, account_type) in accounts {
+            let balance = self.storage.get_balance(&account_id, *effective_date, None);
+            result.push(DataValue::BalanceSheetItem(BalanceSheetItem {
+                account_id,
+                account_type,
+                balance: OrderedFloat::from(balance),
+            }));
+        }
 
         Ok(DataValue::List(result))
     }

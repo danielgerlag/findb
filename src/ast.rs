@@ -72,7 +72,7 @@ pub struct JournalExpression {
     pub dimensions: BTreeMap<Arc<str>, Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum AccountType {
     Asset,
     Liability,

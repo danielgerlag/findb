@@ -125,6 +125,15 @@ impl Storage {
         drop(ledger_accounts);
         entries
     }
+
+    pub fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)> {
+        let ledger_accounts = self.ledger_accounts.read().unwrap();
+        let mut result = Vec::new();
+        for (k, v) in ledger_accounts.iter() {
+            result.push((k.clone(), v.account_type.clone()));
+        }
+        result
+    }
 }
 
 // #[derive(Debug, Clone)]

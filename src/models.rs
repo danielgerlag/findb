@@ -3,6 +3,8 @@ use std::{collections::BTreeMap, sync::Arc};
 use ordered_float::OrderedFloat;
 use time::Date;
 
+use crate::ast::AccountType;
+
 pub mod write;
 pub mod read;
 
@@ -20,6 +22,7 @@ pub enum DataValue {
     AccountId(Arc<str>),
     Dimension((Arc<str>, Arc<DataValue>)),
     StatementLine(StatementTxn),
+    BalanceSheetItem(BalanceSheetItem),
 }
 
 impl DataValue {
@@ -47,4 +50,11 @@ pub struct StatementTxn {
     pub amount: OrderedFloat<f64>,
     pub balance: OrderedFloat<f64>,
 
+}
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub struct BalanceSheetItem {
+    pub account_id: Arc<str>,
+    pub account_type: AccountType,    
+    pub balance: OrderedFloat<f64>,
 }

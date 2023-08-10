@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use functions::Statement;
+use functions::{Statement, BalanceSheet};
 use models::DataValue;
 use time::{Date, Month};
 
@@ -23,6 +23,7 @@ fn main() {
     let function_registry = FunctionRegistry::new();
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
+    function_registry.register_function("balance_sheet", Function::Scalar(Arc::new(BalanceSheet::new(storage.clone()))));
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
 
@@ -72,7 +73,8 @@ fn main() {
     GET 
         statement(@loans, 2023-02-01, 2023-03-01, Customer='John Doe') as John,
         statement(@loans, 2023-02-01, 2023-03-01, Customer='Joe Soap') as Joe,
-        balance(@loans, 2023-03-01) AS Total
+        balance(@loans, 2023-03-01) AS Total,
+        balance_sheet(2023-03-01) AS BalanceSheet
     ";
     // "GET 
     //     balance(@bank, $date, Customer='Frank Doe') AS Frank,
