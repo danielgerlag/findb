@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use functions::{Statement, BalanceSheet};
+use axum::{Router, routing::{get, post}, extract::State, response::IntoResponse};
+use functions::{Statement, TrialBalance};
 use models::DataValue;
+use prettytable::{Table, row};
 use time::{Date, Month};
 
 use crate::{statement_executor::{StatementExecutor, ExecutionContext}, storage::Storage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::Balance};
@@ -15,7 +17,8 @@ pub mod storage;
 pub mod function_registry;
 pub mod functions;
 
-fn main() {
+#[tokio::main]
+async fn main() {
 
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
 
@@ -23,7 +26,56 @@ fn main() {
     let function_registry = FunctionRegistry::new();
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
-    function_registry.register_function("balance_sheet", Function::Scalar(Arc::new(BalanceSheet::new(storage.clone()))));
+    function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
+    let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
+    let exec = StatementExecutor::new(expression_evaluator, storage);
+
+    
+    let app = Router::new()
+        .route("/", post(handler))
+        .with_state(Arc::new(exec));
+
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+
+
+async fn handler(
+    State(exec): State<Arc<StatementExecutor>>,
+    query: String
+) -> impl IntoResponse {
+    let mut results = String::new();
+    let statements = lexer::parse(&query).unwrap();
+    
+    //println!("{:#?}", statements);
+    
+    let eff_date = Date::from_calendar_date(2023, Month::March, 1).unwrap();
+    let mut context = ExecutionContext::new(eff_date, QueryVariables::new());
+    context.variables.insert("date".into(), DataValue::Date(Date::from_calendar_date(2023, Month::May, 20).unwrap()));
+    
+    for statement in statements.iter() {
+        let result = exec.execute(&mut context, statement).unwrap();
+
+        //println!("{}", result)
+        let result_str = result.to_string();
+        results.push_str(result_str.as_str());
+        results.push_str("\n");
+    }
+
+    results
+}
+
+fn stuff() {
+
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
+
+    let storage = Arc::new(Storage::new());
+    let function_registry = FunctionRegistry::new();
+    function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
+    function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
+    function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
 
@@ -74,7 +126,7 @@ fn main() {
         statement(@loans, 2023-02-01, 2023-03-01, Customer='John Doe') as John,
         statement(@loans, 2023-02-01, 2023-03-01, Customer='Joe Soap') as Joe,
         balance(@loans, 2023-03-01) AS Total,
-        balance_sheet(2023-03-01) AS BalanceSheet
+        trial_balance(2023-03-01) AS TrialBalance
     ";
     // "GET 
     //     balance(@bank, $date, Customer='Frank Doe') AS Frank,
@@ -96,7 +148,7 @@ fn main() {
     for statement in statements.iter() {
         let result = exec.execute(&mut context, statement).unwrap();
 
-        println!("{:#?}", result)
+        println!("{}", result)
     }
     
 

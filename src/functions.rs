@@ -2,7 +2,7 @@ use std::{sync::Arc, ops::Bound};
 
 use ordered_float::OrderedFloat;
 
-use crate::{function_registry::ScalarFunction, models::{DataValue, BalanceSheetItem}, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::Storage};
+use crate::{function_registry::ScalarFunction, models::{DataValue, TrialBalanceItem}, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::Storage};
 
 
 
@@ -82,15 +82,15 @@ impl ScalarFunction for Statement {
 
         let result = self.storage.get_statement(&account_id, Bound::Included(*from), Bound::Included(*to), dimension);
 
-        Ok(DataValue::List(result))
+        Ok(result)
     }
 }
 
-pub struct BalanceSheet {
+pub struct TrialBalance {
     storage: Arc<Storage>,
 }
 
-impl BalanceSheet {
+impl TrialBalance {
     pub fn new(storage: Arc<Storage>) -> Self {
         Self {
             storage,
@@ -98,7 +98,7 @@ impl BalanceSheet {
     }
 }
 
-impl ScalarFunction for BalanceSheet {
+impl ScalarFunction for TrialBalance {
     fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
         let effective_date = match args.get(0) {
             Some(DataValue::Date(dt)) => dt,
@@ -109,13 +109,13 @@ impl ScalarFunction for BalanceSheet {
         let mut result = Vec::new();
         for (account_id, account_type) in accounts {
             let balance = self.storage.get_balance(&account_id, *effective_date, None);
-            result.push(DataValue::BalanceSheetItem(BalanceSheetItem {
+            result.push(TrialBalanceItem {
                 account_id,
                 account_type,
                 balance: OrderedFloat::from(balance),
-            }));
+            });
         }
 
-        Ok(DataValue::List(result))
+        Ok(DataValue::TrialBalance(result))
     }
 }

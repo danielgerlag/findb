@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, ops::Add};
+use std::{collections::BTreeMap, sync::Arc, ops::Add, fmt::Display};
 
 use ordered_float::OrderedFloat;
 use time::Date;
@@ -28,6 +28,20 @@ impl From<StorageError> for EvaluationError {
 }
 
 pub type QueryVariables = BTreeMap<Arc<str>, DataValue>;
+
+pub trait MyToString {
+    fn to_string(&self) -> String;
+}
+
+impl MyToString for QueryVariables {
+    fn to_string(&self) -> String {
+        let mut result = String::new();
+        for (key, value) in self {
+            result.push_str(&format!("{}={}\n", key, value));
+        }
+        result
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ExpressionEvaluationContext {

@@ -1,4 +1,4 @@
-use std::{sync::Arc, collections::{BTreeMap, HashMap}};
+use std::{sync::Arc, collections::{BTreeMap, HashMap}, fmt::Display};
 
 use serde::__private::de;
 use time::Date;
@@ -32,6 +32,17 @@ impl ExecutionResult {
             variables: QueryVariables::new(),
             journals_created: 0,
         }
+    }
+}
+
+impl Display for ExecutionResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut result = String::new();
+        for (key, value) in &self.variables {
+            result.push_str(&format!("{}: {}\n", key, value));
+        }
+        result.push_str(&format!("journals_created: {}", self.journals_created));
+        f.write_str(&result)
     }
 }
 

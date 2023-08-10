@@ -91,7 +91,7 @@ impl Storage {
         ledger_accounts.get(account_id).unwrap().get_balance(date, dimension)
     }
 
-    pub fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<DataValue> {
+    pub fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> DataValue {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         let acct = ledger_accounts.get(account_id).unwrap(); //.get_balance(date, dimension)
         let entries = acct.get_statement(from, to, dimension);
@@ -103,19 +103,19 @@ impl Storage {
         for e in entries {
             match journals.get(&e.0) {
                 Some(j) => {
-                    result.push(DataValue::StatementLine(StatementTxn {
+                    result.push(StatementTxn {
                         journal_id: e.0,
                         date: j.date,
                         description: j.description.clone(),
                         amount: OrderedFloat(e.1),
                         balance: OrderedFloat(e.2),
-                    }));
+                    });
                 },
                 None => {},
             }
         }
 
-        result
+        DataValue::Statement(result)
     }
 
     pub fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> HashSet<Arc<DataValue>> {
