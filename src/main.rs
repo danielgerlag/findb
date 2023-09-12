@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use axum::{Router, routing::{get, post}, extract::State, response::IntoResponse};
+use axum::{Router, routing::post, extract::State, response::IntoResponse};
 use functions::{Statement, TrialBalance};
 use models::DataValue;
-use prettytable::{Table, row};
 use time::{Date, Month};
 
 use crate::{statement_executor::{StatementExecutor, ExecutionContext}, storage::Storage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::Balance};
@@ -29,11 +28,12 @@ async fn main() {
     function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
-
     
     let app = Router::new()
         .route("/", post(handler))
         .with_state(Arc::new(exec));
+
+    log::info!("API listening on port 3000");
 
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
         .serve(app.into_make_service())
