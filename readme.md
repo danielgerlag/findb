@@ -6,8 +6,6 @@ FinanceDB is not just a data store. It also provides a domain specific query lan
 
 FinanceDB is an accounting ledger at its core, so standardized financial concepts and statements (balance sheet, income statement, etc..) are native to the platform.
 
-FinanceDB is not a general-purpose database and is not a direct competitor of QuickBooks or an enterprise accounting system, it is a primitive building block to support legal entities that solely exist to house a specific financial service.
-
 ## Project Status
 
 FinanceDB is current in a proof-of-concept stage.  You can download the source and spin up an instance which will expose an API endpoint on port 3000.  You can then HTTP POST plain text scripts to this API to interact with it.  Currently storage is only in-memory at this stage and all data will be lost when the server shuts down.
