@@ -19,6 +19,9 @@ FinanceDB is an accounting ledger at its core, so standardized financial concept
 - **Authentication** — API key-based auth with role support (admin/writer/reader)
 - **Observability** — Structured logging (tracing), Prometheus metrics (`/metrics`), health checks
 - **Configurable** — TOML config file, CLI args, environment variable support
+- **Pluggable storage** — In-memory (default) or SQLite for persistence
+- **Multi-currency** — FX rate conversion functions (`convert`, `fx_rate`)
+- **Built-in functions** — `balance`, `statement`, `trial_balance`, `income_statement`, `convert`, `round`, `abs`, `min`, `max`
 
 ## Quick Start
 
@@ -50,6 +53,10 @@ port = 3000
 [logging]
 level = "info"
 json = false
+
+[storage]
+backend = "memory"        # "memory" or "sqlite"
+# sqlite_path = "findb.db"  # path for sqlite backend
 
 [auth]
 enabled = false
@@ -194,6 +201,34 @@ COMMIT;
 ```
 
 Multi-statement FQL scripts are automatically wrapped in an implicit transaction. On any error, all changes are rolled back.
+
+### Built-in Functions
+
+| Function | Description |
+|----------|-------------|
+| `balance(@acct, date, [dim])` | Account balance at a date, optionally filtered by dimension |
+| `statement(@acct, from, to, [dim])` | Account statement for a period |
+| `trial_balance(date)` | Trial balance across all accounts |
+| `income_statement(from, to)` | P&L report for a period |
+| `account_count()` | Number of accounts |
+| `convert(amount, 'rate', date)` | Convert amount using an FX rate |
+| `fx_rate('rate', date)` | Get rate value at a date |
+| `round(value, places)` | Round to N decimal places (default 2) |
+| `abs(value)` | Absolute value |
+| `min(a, b)` | Minimum of two values |
+| `max(a, b)` | Maximum of two values |
+
+### Multi-Currency
+
+```sql
+CREATE RATE usd_eur;
+SET RATE usd_eur 0.85 2023-01-01;
+SET RATE usd_eur 0.92 2023-06-01;
+
+GET convert(1000, 'usd_eur', 2023-07-01) AS euros,
+    fx_rate('usd_eur', 2023-07-01) AS rate;
+-- euros: 920, rate: 0.92
+```
 
 ## Example use case: Lending Fund
 
