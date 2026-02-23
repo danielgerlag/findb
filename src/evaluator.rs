@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, str::FromStr};
 
 use rust_decimal::{Decimal, MathematicalOps};
 use time::Date;
@@ -164,10 +164,10 @@ impl ExpressionEvaluator {
                 ast::Literal::Text(t) => DataValue::String(t.clone()),
                 ast::Literal::Null => DataValue::Null,
                 ast::Literal::Integer(i) => DataValue::Int(*i),
-                ast::Literal::Real(r) => DataValue::Money(Decimal::from_f64_retain(*r).unwrap_or(Decimal::ZERO)),
+                ast::Literal::Real(r) => DataValue::Money(Decimal::from_str(r).unwrap_or(Decimal::ZERO)),
                 ast::Literal::Date(d) => DataValue::Date(*d),
                 ast::Literal::Account(a) => DataValue::AccountId(a.clone()),
-                ast::Literal::Percentage(p) => DataValue::Percentage(Decimal::from_f64_retain(*p).unwrap_or(Decimal::ZERO)),
+                ast::Literal::Percentage(p) => DataValue::Percentage(Decimal::from_str(p).unwrap_or(Decimal::ZERO)),
             },
             ast::UnaryExpression::Property { name, key } => match context.get_variable(name) {
                 Some(v) => match v {

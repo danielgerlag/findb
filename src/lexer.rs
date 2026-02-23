@@ -83,8 +83,8 @@ peg::parser! {
             = integer:$("-"?num()+) {? integer.parse().or(Err("invalid integer")) }
 
         // e.g. '-0.53', '34346.245', '236.0'
-        rule real() -> f64
-            = real:$("-"? num()+ "." num()+) {? real.parse().or(Err("invalid real"))}
+        rule real() -> Arc<str>
+            = real:$("-"? num()+ "." num()+) { Arc::from(real) }
 
         // e.g. 'TRUE', 'FALSE'
         rule boolean() -> bool
@@ -119,7 +119,7 @@ peg::parser! {
             / t:text() { Literal::Text(t) }
             / a:account_id() { Literal::Account(a) }            
             / pr:real() "%" { Literal::Percentage(pr) }            
-            / pi:integer() "%" { Literal::Percentage(pi as f64) }            
+            / pi:$("-"? num()+) "%" { Literal::Percentage(Arc::from(pi)) }            
             / kw_null() { Literal::Null }
 
 
@@ -275,7 +275,7 @@ peg::parser! {
             / a:accrue_command() { Statement::Accrue(a) }
 
         pub rule statements() -> Vec<Statement>
-            = s:statement() ** (__* ";" __*) __* ";"? { s }
+            = __* s:statement() ** (__* ";" __*) __* ";"? __* { s }
 
     }
 }

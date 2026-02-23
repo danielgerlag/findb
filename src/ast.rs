@@ -171,11 +171,11 @@ impl UnaryExpression {
 pub enum Literal {
     Date(Date),
     Integer(i64),
-    Real(f64),
+    Real(Arc<str>),
     Boolean(bool),
     Text(Arc<str>),
     Account(Arc<str>),
-    Percentage(f64),
+    Percentage(Arc<str>),
     Null,
 }
 
