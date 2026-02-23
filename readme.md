@@ -2,13 +2,198 @@
 
 FinanceDB is a domain specific database for finance. It is an open-source accounting primitive, a building block upon which financial products can be built. It natively supports double-entry bookkeeping, multi-currency transactions, complex tax rules, and various accounting standards. It maintains specialized indexes tuned for financial use cases that enable fast and accurate queries and calculations.
 
-FinanceDB is not just a data store. It also provides a domain specific query language (DSL) crafted for financial use cases, that is expressive, concise, and intuitive. It is based on the principles of double-entry bookkeeping and supports common financial concepts, such as accounts, journals, debits, credits, adjustments, reversals, accruals, deferrals, allocations, budgets, forecasts, and reports.  It enables developers and non-developers alike to perform complex financial operations and analyses with simple and readable syntax, such as calculating interest with fluctuating rates, amortization, cash flow, net present value, internal rate of return, and more. 
+FinanceDB is not just a data store. It also provides a domain specific query language (FQL) crafted for financial use cases, that is expressive, concise, and intuitive. It is based on the principles of double-entry bookkeeping and supports common financial concepts, such as accounts, journals, debits, credits, adjustments, reversals, accruals, deferrals, allocations, budgets, forecasts, and reports.  It enables developers and non-developers alike to perform complex financial operations and analyses with simple and readable syntax, such as calculating interest with fluctuating rates, amortization, cash flow, net present value, internal rate of return, and more. 
 
 FinanceDB is an accounting ledger at its core, so standardized financial concepts and statements (balance sheet, income statement, etc..) are native to the platform.
 
-## Project Status
+## Features
 
-FinanceDB is current in a proof-of-concept stage.  You can download the source and spin up an instance which will expose an API endpoint on port 3000.  You can then HTTP POST plain text scripts to this API to interact with it.  Currently storage is only in-memory at this stage and all data will be lost when the server shuts down.
+- **FQL (Finance Query Language)** — Domain-specific language for financial operations
+- **Double-entry bookkeeping** — Every transaction debits and credits balanced accounts
+- **Dimension-based indexing** — Slice data by any combination of tags (Customer, Region, etc.)
+- **Variable rate accruals** — Compound interest calculations with fluctuating rates
+- **Decimal precision** — Uses `rust_decimal` for exact monetary arithmetic (no floating-point errors)
+- **ACID transactions** — `BEGIN` / `COMMIT` / `ROLLBACK` with implicit transaction wrapping
+- **Immutable ledger** — Append-only journal entries with sequence numbers and timestamps
+- **REST API** — Full REST API alongside FQL-over-HTTP
+- **Authentication** — API key-based auth with role support (admin/writer/reader)
+- **Observability** — Structured logging (tracing), Prometheus metrics (`/metrics`), health checks
+- **Configurable** — TOML config file, CLI args, environment variable support
+
+## Quick Start
+
+### Build & Run
+
+```bash
+cargo build --release
+./target/release/findb
+```
+
+FinanceDB will start listening on `0.0.0.0:3000` by default.
+
+### Docker
+
+```bash
+docker build -t findb .
+docker run -p 3000:3000 findb
+```
+
+### Configuration
+
+Copy `findb.toml.example` to `findb.toml` and customize:
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 3000
+
+[logging]
+level = "info"
+json = false
+
+[auth]
+enabled = false
+# [[auth.api_keys]]
+# name = "my-service"
+# key = "secret-key"
+# role = "admin"
+```
+
+CLI flags override config values:
+```bash
+findb --port 8080 --log-level debug --config /path/to/findb.toml
+```
+
+## API Endpoints
+
+### FQL (Finance Query Language)
+
+```bash
+# Execute FQL scripts
+POST /fql
+Content-Type: text/plain
+
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @equity EQUITY;
+```
+
+Response:
+```json
+{
+  "success": true,
+  "results": [],
+  "metadata": {
+    "statements_executed": 2,
+    "journals_created": 0
+  }
+}
+```
+
+### REST API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/accounts` | Create account (`{"id": "bank", "account_type": "ASSET"}`) |
+| `GET` | `/api/accounts` | List accounts |
+| `GET` | `/api/accounts/:id/balance?date=2023-12-31` | Query balance |
+| `GET` | `/api/accounts/:id/statement?from=...&to=...` | Get statement |
+| `POST` | `/api/journals` | Create journal (JSON body) |
+| `POST` | `/api/rates` | Create rate |
+| `POST` | `/api/rates/:id` | Set rate value |
+| `GET` | `/api/trial-balance?date=...` | Trial balance |
+
+### Operations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Liveness check |
+| `GET` | `/ready` | Readiness check |
+| `GET` | `/metrics` | Prometheus metrics |
+
+### Authentication
+
+When `auth.enabled = true`, all API endpoints (except `/health`, `/ready`, `/metrics`) require authentication via:
+
+- `X-API-Key: <key>` header, or
+- `Authorization: Bearer <key>` header
+
+## FQL Language Reference
+
+### Accounts
+
+```sql
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @equity EQUITY;
+CREATE ACCOUNT @revenue INCOME;
+CREATE ACCOUNT @cogs EXPENSE;
+CREATE ACCOUNT @payable LIABILITY;
+```
+
+Account types: `ASSET`, `LIABILITY`, `EQUITY`, `INCOME`, `EXPENSE`
+
+### Journals
+
+```sql
+-- Simple journal
+CREATE JOURNAL 2023-01-01, 1000, 'Investment'
+CREDIT @equity, DEBIT @bank;
+
+-- Journal with dimensions
+CREATE JOURNAL 2023-02-01, 500, 'Sale'
+FOR Customer='Acme', Region='US'
+CREDIT @revenue, DEBIT @bank;
+
+-- Partial amounts using rates
+CREATE JOURNAL 2023-01-01, 100, 'Sale with tax'
+CREDIT @revenue,
+DEBIT @bank,
+CREDIT @tax_payable WITH RATE sales_tax,
+DEBIT @bank WITH RATE sales_tax;
+```
+
+### Rates
+
+```sql
+CREATE RATE prime;
+SET RATE prime 0.05 2023-01-01;
+SET RATE prime 0.06 2023-07-01;
+```
+
+### Queries
+
+```sql
+GET balance(@bank, 2023-12-31) AS cash;
+GET balance(@loans, 2023-12-31, Customer='John') AS john_balance;
+GET statement(@bank, 2023-01-01, 2023-12-31) AS bank_stmt;
+GET trial_balance(2023-12-31) AS tb;
+```
+
+### Accruals
+
+```sql
+ACCRUE @loans FROM 2023-01-01 TO 2023-01-31
+WITH RATE prime COMPOUND DAILY
+BY Customer
+INTO JOURNAL
+    2023-02-01, 'Interest'
+DEBIT @loans,
+CREDIT @interest_earned;
+```
+
+Compounding modes: `COMPOUND DAILY`, `COMPOUND CONTINUOUS`
+
+### Transactions
+
+```sql
+BEGIN;
+CREATE JOURNAL 2023-01-01, 1000, 'Transfer'
+CREDIT @savings, DEBIT @checking;
+CREATE JOURNAL 2023-01-01, 50, 'Fee'
+CREDIT @checking, DEBIT @fees;
+COMMIT;
+```
+
+Multi-statement FQL scripts are automatically wrapped in an implicit transaction. On any error, all changes are rolled back.
 
 ## Example use case: Lending Fund
 
