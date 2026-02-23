@@ -26,6 +26,9 @@ pub struct Config {
 
     #[serde(default = "default_logging")]
     pub logging: LoggingConfig,
+
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -44,6 +47,29 @@ pub struct LoggingConfig {
 
     #[serde(default)]
     pub json: bool,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct AuthConfig {
+    /// When true, all API endpoints (except /health and /metrics) require authentication.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Static API keys. Each key has a name (for audit) and a role.
+    #[serde(default)]
+    pub api_keys: Vec<ApiKeyEntry>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ApiKeyEntry {
+    pub name: String,
+    pub key: String,
+    #[serde(default = "default_role")]
+    pub role: String,
+}
+
+fn default_role() -> String {
+    "reader".to_string()
 }
 
 fn default_server() -> ServerConfig {
@@ -77,6 +103,7 @@ impl Default for Config {
         Config {
             server: default_server(),
             logging: default_logging(),
+            auth: AuthConfig::default(),
         }
     }
 }

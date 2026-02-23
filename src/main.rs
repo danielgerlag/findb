@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use axum::{Router, routing::{post, get}, extract::{State, Path, Query}, response::IntoResponse, http::StatusCode, Json};
+use axum::{Router, routing::{post, get}, extract::{State, Path, Query}, response::IntoResponse, http::StatusCode, Json, middleware, Extension};
 use clap::Parser;
+use findb::auth::auth_middleware;
 use findb::config::{CliArgs, Config};
 use findb::functions::{Statement, TrialBalance};
 use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::InMemoryStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::Balance, lexer};
@@ -62,15 +63,11 @@ async fn main() {
     let exec = StatementExecutor::new(expression_evaluator, storage);
     let state = Arc::new(exec);
     
-    let app = Router::new()
+    let auth_config = Arc::new(config.auth.clone());
+
+    // Protected routes (auth middleware applied)
+    let protected = Router::new()
         .route("/fql", post(fql_handler))
-        .route("/health", get(health_handler))
-        .route("/ready", get(health_handler))
-        .route("/metrics", get({
-            let handle = prom_handle;
-            move || std::future::ready(handle.render())
-        }))
-        // REST API
         .route("/api/accounts", post(rest_create_account).get(rest_list_accounts))
         .route("/api/accounts/:id/balance", get(rest_get_balance))
         .route("/api/accounts/:id/statement", get(rest_get_statement))
@@ -78,9 +75,21 @@ async fn main() {
         .route("/api/rates/:id", post(rest_set_rate))
         .route("/api/journals", post(rest_create_journal))
         .route("/api/trial-balance", get(rest_trial_balance))
-        // Legacy
         .route("/", post(fql_handler))
-        .with_state(state);
+        .with_state(state)
+        .layer(Extension(auth_config))
+        .layer(middleware::from_fn(auth_middleware));
+
+    // Public routes (no auth)
+    let public = Router::new()
+        .route("/health", get(health_handler))
+        .route("/ready", get(health_handler))
+        .route("/metrics", get({
+            let handle = prom_handle;
+            move || std::future::ready(handle.render())
+        }));
+
+    let app = public.merge(protected);
 
     let addr = config.listen_addr();
     tracing::info!("FinanceDB listening on {}", addr);

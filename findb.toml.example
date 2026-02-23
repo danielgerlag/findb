@@ -7,3 +7,18 @@ port = 3000
 [logging]
 level = "info"
 json = false
+
+[auth]
+enabled = false
+
+# Uncomment to enable API key authentication:
+# enabled = true
+# [[auth.api_keys]]
+# name = "admin-service"
+# key = "your-secret-key-here"
+# role = "admin"
+#
+# [[auth.api_keys]]
+# name = "reader-service"
+# key = "another-key"
+# role = "reader"
