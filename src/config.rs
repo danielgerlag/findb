@@ -29,6 +29,37 @@ pub struct Config {
 
     #[serde(default)]
     pub auth: AuthConfig,
+
+    #[serde(default)]
+    pub storage: StorageConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StorageConfig {
+    /// Storage backend: "memory" or "sqlite"
+    #[serde(default = "default_storage_backend")]
+    pub backend: String,
+
+    /// Path to SQLite database file (only used when backend = "sqlite")
+    #[serde(default = "default_sqlite_path")]
+    pub sqlite_path: String,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_storage_backend(),
+            sqlite_path: default_sqlite_path(),
+        }
+    }
+}
+
+fn default_storage_backend() -> String {
+    "memory".to_string()
+}
+
+fn default_sqlite_path() -> String {
+    "findb.db".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -104,6 +135,7 @@ impl Default for Config {
             server: default_server(),
             logging: default_logging(),
             auth: AuthConfig::default(),
+            storage: StorageConfig::default(),
         }
     }
 }

@@ -469,3 +469,122 @@ fn test_account_count() {
         _ => panic!("Expected Int, got {:?}", count),
     }
 }
+
+// --- SQLite backend tests ---
+
+fn setup_sqlite() -> (StatementExecutor, ExecutionContext) {
+    use findb::sqlite_storage::SqliteStorage;
+    use findb::storage::StorageBackend;
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(":memory:").unwrap());
+    let function_registry = FunctionRegistry::new();
+    function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
+    function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
+    function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
+    function_registry.register_function("income_statement", Function::Scalar(Arc::new(IncomeStatement::new(storage.clone()))));
+    function_registry.register_function("account_count", Function::Scalar(Arc::new(AccountCount::new(storage.clone()))));
+    let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
+    let exec = StatementExecutor::new(expression_evaluator, storage);
+    let eff_date = time::OffsetDateTime::now_utc().date();
+    let context = ExecutionContext::new(eff_date, QueryVariables::new());
+    (exec, context)
+}
+
+#[test]
+fn test_sqlite_lending_fund_e2e() {
+    let (exec, mut ctx) = setup_sqlite();
+
+    let results = execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @loans ASSET;
+        CREATE ACCOUNT @interest_earned INCOME;
+        CREATE ACCOUNT @equity EQUITY;
+
+        CREATE RATE prime;
+        SET RATE prime 0.05 2023-01-01;
+        SET RATE prime 0.06 2023-02-15;
+
+        CREATE JOURNAL
+            2023-01-01, 20000, 'Investment'
+        FOR Investor='Frank'
+        CREDIT @equity, DEBIT @bank;
+
+        CREATE JOURNAL
+            2023-02-01, 1000, 'Loan Issued'
+        FOR Customer='John', Region='US'
+        DEBIT @loans, CREDIT @bank;
+
+        CREATE JOURNAL
+            2023-02-01, 500, 'Loan Issued'
+        FOR Customer='Joe', Region='US'
+        DEBIT @loans, CREDIT @bank;
+
+        ACCRUE @loans FROM 2023-02-01 TO 2023-02-28
+        WITH RATE prime COMPOUND DAILY
+        BY Customer
+        INTO JOURNAL
+            2023-03-01, 'Interest'
+        DEBIT @loans,
+        CREDIT @interest_earned;
+
+        GET
+            balance(@loans, 2023-03-01) AS LoanBookTotal,
+            trial_balance(2023-03-01) AS TrialBalance
+    ");
+
+    let get_result = results.last().unwrap();
+
+    let loan_total = &get_result.variables["LoanBookTotal"];
+    match loan_total {
+        DataValue::Money(m) => {
+            assert!(*m > rust_decimal::Decimal::from(1500), "Loan book should include accrued interest");
+        },
+        _ => panic!("Expected Money for LoanBookTotal"),
+    }
+
+    // Verify trial balance is balanced
+    match &get_result.variables["TrialBalance"] {
+        DataValue::TrialBalance(items) => {
+            let mut total_debit = rust_decimal::Decimal::ZERO;
+            let mut total_credit = rust_decimal::Decimal::ZERO;
+            for item in items {
+                match item.account_type {
+                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                        total_debit += item.balance;
+                    },
+                    _ => {
+                        total_credit += item.balance;
+                    },
+                }
+            }
+            assert_eq!(total_debit, total_credit, "SQLite: Trial balance must be in balance after accrual");
+        },
+        _ => panic!("Expected TrialBalance"),
+    }
+}
+
+#[test]
+fn test_sqlite_implicit_transaction_rollback() {
+    let (exec, mut ctx) = setup_sqlite();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+    ");
+
+    let statements = lexer::parse("
+        CREATE JOURNAL 2023-01-01, 1000, 'Investment' CREDIT @equity, DEBIT @bank;
+        CREATE JOURNAL 2023-02-01, 500, 'Bad' CREDIT @nonexistent, DEBIT @bank;
+    ").unwrap();
+
+    let result = exec.execute_script(&mut ctx, &statements);
+    assert!(result.is_err(), "Script should fail on missing account");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@bank, 2023-12-31) AS result
+    ");
+    let balance = &results[0].variables["result"];
+    match balance {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::ZERO, "SQLite: Balance should be 0 after rollback"),
+        _ => panic!("Expected Money, got {:?}", balance),
+    }
+}

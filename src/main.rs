@@ -5,7 +5,7 @@ use clap::Parser;
 use findb::auth::auth_middleware;
 use findb::config::{CliArgs, Config};
 use findb::functions::{Statement, TrialBalance};
-use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::InMemoryStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount}, lexer};
+use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, sqlite_storage::SqliteStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount}, lexer};
 use metrics::{counter, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Serialize, Deserialize};
@@ -48,7 +48,17 @@ async fn main() {
         fmt().with_env_filter(filter).init();
     }
 
-    let storage = Arc::new(InMemoryStorage::new());
+    let storage: Arc<dyn StorageBackend> = match config.storage.backend.as_str() {
+        "sqlite" => {
+            tracing::info!(path = %config.storage.sqlite_path, "Using SQLite storage backend");
+            Arc::new(SqliteStorage::new(&config.storage.sqlite_path)
+                .expect("Failed to initialize SQLite storage"))
+        }
+        _ => {
+            tracing::info!("Using in-memory storage backend");
+            Arc::new(InMemoryStorage::new())
+        }
+    };
 
     // Install Prometheus metrics recorder
     let prom_handle = PrometheusBuilder::new()

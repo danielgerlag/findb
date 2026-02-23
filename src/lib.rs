@@ -6,5 +6,6 @@ pub mod evaluator;
 pub mod statement_executor;
 pub mod models;
 pub mod storage;
+pub mod sqlite_storage;
 pub mod function_registry;
 pub mod functions;

@@ -8,6 +8,12 @@ port = 3000
 level = "info"
 json = false
 
+[storage]
+# Storage backend: "memory" (default) or "sqlite"
+backend = "memory"
+# Path to SQLite database file (only used when backend = "sqlite")
+# sqlite_path = "findb.db"
+
 [auth]
 enabled = false
 
