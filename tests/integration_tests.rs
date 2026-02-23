@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use findb::evaluator::{ExpressionEvaluator, QueryVariables};
 use findb::function_registry::{FunctionRegistry, Function};
-use findb::functions::{Balance, Statement, TrialBalance};
+use findb::functions::{Balance, Statement, TrialBalance, IncomeStatement, AccountCount};
 use findb::lexer;
 use findb::models::DataValue;
 use findb::statement_executor::{ExecutionContext, StatementExecutor};
@@ -14,6 +14,8 @@ fn setup() -> (StatementExecutor, ExecutionContext) {
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
     function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
+    function_registry.register_function("income_statement", Function::Scalar(Arc::new(IncomeStatement::new(storage.clone()))));
+    function_registry.register_function("account_count", Function::Scalar(Arc::new(AccountCount::new(storage.clone()))));
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
     let eff_date = time::OffsetDateTime::now_utc().date();
@@ -413,5 +415,57 @@ fn test_implicit_transaction_rollback_on_error() {
     match balance {
         DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::ZERO, "Balance should be 0 after rollback"),
         _ => panic!("Expected Money, got {:?}", balance),
+    }
+}
+
+#[test]
+fn test_income_statement() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @cogs EXPENSE;
+
+        CREATE JOURNAL 2023-01-01, 10000, 'Investment' CREDIT @equity, DEBIT @bank;
+        CREATE JOURNAL 2023-01-15, 500, 'Sale' CREDIT @revenue, DEBIT @bank;
+        CREATE JOURNAL 2023-02-01, 300, 'Sale' CREDIT @revenue, DEBIT @bank;
+        CREATE JOURNAL 2023-01-20, 200, 'Supplies' CREDIT @bank, DEBIT @cogs;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET income_statement(2023-01-01, 2023-03-01) AS pnl
+    ");
+
+    let pnl = &results[0].variables["pnl"];
+    match pnl {
+        DataValue::TrialBalance(items) => {
+            let net = items.iter().find(|i| i.account_id.as_ref() == "NET_INCOME").unwrap();
+            // Revenue 800 - Expenses 200 = Net Income 600
+            assert_eq!(net.balance, rust_decimal::Decimal::from(600));
+        },
+        _ => panic!("Expected TrialBalance, got {:?}", pnl),
+    }
+}
+
+#[test]
+fn test_account_count() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @revenue INCOME;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET account_count() AS count
+    ");
+
+    let count = &results[0].variables["count"];
+    match count {
+        DataValue::Int(n) => assert_eq!(*n, 3),
+        _ => panic!("Expected Int, got {:?}", count),
     }
 }

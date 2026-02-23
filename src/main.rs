@@ -5,7 +5,7 @@ use clap::Parser;
 use findb::auth::auth_middleware;
 use findb::config::{CliArgs, Config};
 use findb::functions::{Statement, TrialBalance};
-use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::InMemoryStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::Balance, lexer};
+use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::InMemoryStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount}, lexer};
 use metrics::{counter, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Serialize, Deserialize};
@@ -59,6 +59,8 @@ async fn main() {
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
     function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
+    function_registry.register_function("income_statement", Function::Scalar(Arc::new(IncomeStatement::new(storage.clone()))));
+    function_registry.register_function("account_count", Function::Scalar(Arc::new(AccountCount::new(storage.clone()))));
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
     let state = Arc::new(exec);
