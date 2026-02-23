@@ -42,7 +42,9 @@ impl Display for ExecutionResult {
         for (key, value) in &self.variables {
             result.push_str(&format!("{}: {}\n", key, value));
         }
-        result.push_str(&format!("journals_created: {}", self.journals_created));
+        if self.journals_created > 0 {
+            result.push_str(&format!("journals_created: {}", self.journals_created));
+        }
         f.write_str(&result)
     }
 }

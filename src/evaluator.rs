@@ -156,7 +156,10 @@ impl ExpressionEvaluator {
             ast::UnaryExpression::Not(expression) => {
                 DataValue::Bool(!self.evaluate_predicate(context, expression)?)
             }
-            ast::UnaryExpression::Exists(_) => todo!(),
+            ast::UnaryExpression::Exists(expr) => {
+                let val = self.evaluate_expression(context, expr)?;
+                DataValue::Bool(!val.is_null())
+            },
             ast::UnaryExpression::IsNull(e) => DataValue::Bool(self.evaluate_expression(context, e)?.is_null()),
             ast::UnaryExpression::IsNotNull(e) => DataValue::Bool(!self.evaluate_expression(context, e)?.is_null()),
             ast::UnaryExpression::Literal(l) => match l {
