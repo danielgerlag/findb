@@ -68,7 +68,9 @@ import { executeFql } from '../api/client'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import DatePicker from 'primevue/datepicker'
+import { useToast } from 'primevue/usetoast'
 
+const toast = useToast()
 const newRateId = ref('')
 const createMsg = ref('')
 const setRateId = ref('')
@@ -85,27 +87,44 @@ function formatDate(d: Date): string {
 
 async function doCreateRate() {
   if (!newRateId.value) return
-  const resp = await executeFql(`CREATE RATE ${newRateId.value};`)
-  createMsg.value = resp.success ? `✓ Rate "${newRateId.value}" created` : resp.error || 'Error'
+  try {
+    const resp = await executeFql(`CREATE RATE ${newRateId.value};`)
+    createMsg.value = resp.success ? `✓ Rate "${newRateId.value}" created` : resp.error || 'Error'
+    if (resp.success) toast.add({ severity: 'success', summary: 'Rate created', detail: newRateId.value, life: 3000 })
+  } catch (e: any) {
+    createMsg.value = e.message
+    toast.add({ severity: 'error', summary: 'Failed to create rate', detail: e.message, life: 5000 })
+  }
 }
 
 async function doSetRate() {
   if (!setRateId.value || !setRateValue.value) return
   const date = formatDate(setRateDate.value)
-  const resp = await executeFql(`SET RATE ${setRateId.value} ${setRateValue.value} ${date};`)
-  setMsg.value = resp.success ? `✓ Rate set: ${setRateId.value} = ${setRateValue.value} on ${date}` : resp.error || 'Error'
+  try {
+    const resp = await executeFql(`SET RATE ${setRateId.value} ${setRateValue.value} ${date};`)
+    setMsg.value = resp.success ? `✓ Rate set: ${setRateId.value} = ${setRateValue.value} on ${date}` : resp.error || 'Error'
+    if (resp.success) toast.add({ severity: 'success', summary: 'Rate updated', detail: `${setRateId.value} = ${setRateValue.value}`, life: 3000 })
+  } catch (e: any) {
+    setMsg.value = e.message
+    toast.add({ severity: 'error', summary: 'Failed to set rate', detail: e.message, life: 5000 })
+  }
 }
 
 async function doLookup() {
   if (!lookupId.value) return
   const date = formatDate(lookupDate.value)
-  const resp = await executeFql(`GET fx_rate('${lookupId.value}', ${date}) AS rate`)
-  if (resp.success && resp.results.length > 0) {
-    const resultText = resp.results[0] ?? ''
-    const match = resultText.match(/rate:\s*(.+)/)
-    lookupResult.value = match && match[1] ? match[1].trim() : resultText
-  } else {
-    lookupResult.value = resp.error || 'Not found'
+  try {
+    const resp = await executeFql(`GET fx_rate('${lookupId.value}', ${date}) AS rate`)
+    if (resp.success && resp.results.length > 0) {
+      const resultText = resp.results[0] ?? ''
+      const match = resultText.match(/rate:\s*(.+)/)
+      lookupResult.value = match && match[1] ? match[1].trim() : resultText
+    } else {
+      lookupResult.value = resp.error || 'Not found'
+    }
+  } catch (e: any) {
+    lookupResult.value = null
+    toast.add({ severity: 'error', summary: 'Lookup failed', detail: e.message, life: 5000 })
   }
 }
 </script>

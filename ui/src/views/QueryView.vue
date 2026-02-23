@@ -39,7 +39,9 @@
 import { ref, onMounted } from 'vue'
 import { executeFql } from '../api/client'
 import Button from 'primevue/button'
+import { useToast } from 'primevue/usetoast'
 
+const toast = useToast()
 const query = ref('')
 const results = ref<string[]>([])
 const error = ref<string | null>(null)
@@ -73,6 +75,7 @@ async function executeQuery() {
     localStorage.setItem('findb-query-history', JSON.stringify(history.value))
   } catch (e: any) {
     error.value = e.message
+    toast.add({ severity: 'error', summary: 'Connection error', detail: 'Could not reach FinanceDB server. Is it running?', life: 5000 })
   } finally {
     loading.value = false
   }

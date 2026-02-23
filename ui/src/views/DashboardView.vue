@@ -30,6 +30,9 @@
       <div class="card">
         <h3>Trial Balance</h3>
         <DataTable :value="store.trialBalance" stripedRows size="small" :loading="store.loading">
+          <template #empty>
+            <div class="empty-state">No accounts yet. Create accounts and journals to see data here.</div>
+          </template>
           <Column field="account_id" header="Account" sortable />
           <Column field="debit" header="Debit" sortable>
             <template #body="{ data }">{{ formatMoney(data.debit) }}</template>

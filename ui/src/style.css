@@ -56,6 +56,7 @@
   flex: 1;
   padding: 1.5rem 2rem;
   overflow-x: auto;
+  min-width: 0;
 }
 
 .page-header {
@@ -70,7 +71,7 @@
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
@@ -135,6 +136,7 @@
   gap: 0.75rem;
   align-items: center;
   margin: 0.75rem 0;
+  flex-wrap: wrap;
 }
 
 .error-msg {
@@ -146,21 +148,85 @@
   margin: 0.5rem 0;
 }
 
+.success-msg {
+  background: #f0fdf4;
+  color: #16a34a;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border-left: 3px solid #22c55e;
+  margin: 0.5rem 0;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: #94a3b8;
+  font-style: italic;
+}
+
 .form-row {
   display: flex;
   gap: 0.75rem;
   align-items: end;
   margin-bottom: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .form-field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-width: 0;
 }
 
 .form-field label {
   font-size: 0.85rem;
   color: #64748b;
   font-weight: 500;
+}
+
+/* Responsive: stack sidebar on narrow screens */
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .app-sidebar {
+    width: 100%;
+    padding: 0.5rem 0;
+  }
+
+  .app-sidebar h2 {
+    display: inline-block;
+    margin-bottom: 0;
+    padding: 0.5rem 1rem;
+  }
+
+  .app-sidebar nav {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .app-sidebar nav a {
+    white-space: nowrap;
+    padding: 0.5rem 1rem;
+    border-left: none !important;
+  }
+
+  .app-sidebar nav a.router-link-active {
+    border-bottom: 2px solid #38bdf8;
+  }
+
+  .app-main {
+    padding: 1rem;
+  }
+
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }

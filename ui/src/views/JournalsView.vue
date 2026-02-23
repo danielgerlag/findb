@@ -81,7 +81,9 @@ import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
+import { useToast } from 'primevue/usetoast'
 
+const toast = useToast()
 const journalDate = ref(new Date())
 const amount = ref('')
 const description = ref('')
@@ -129,11 +131,14 @@ async function submit() {
     const resp = await executeFql(fqlPreview.value)
     if (resp.success) {
       success.value = true
+      toast.add({ severity: 'success', summary: 'Journal created', detail: `${resp.metadata.journals_created} journal(s) created`, life: 3000 })
     } else {
       error.value = resp.error || 'Unknown error'
+      toast.add({ severity: 'error', summary: 'Journal error', detail: resp.error || 'Unknown error', life: 5000 })
     }
   } catch (e: any) {
     error.value = e.message
+    toast.add({ severity: 'error', summary: 'Request failed', detail: e.message, life: 5000 })
   } finally {
     loading.value = false
   }

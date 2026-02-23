@@ -12,6 +12,9 @@
 
       <DataTable :value="accounts" stripedRows size="small" :loading="loading"
                  selectionMode="single" v-model:selection="selectedAccount" @row-select="onAccountSelect">
+        <template #empty>
+          <div class="empty-state">No accounts found. Create one to get started.</div>
+        </template>
         <Column field="account_id" header="Account" sortable />
         <Column field="debit" header="Debit" sortable>
           <template #body="{ data }">{{ formatMoney(data.debit) }}</template>
@@ -120,6 +123,8 @@ async function loadAccounts() {
     if (resp.success && resp.results.length > 0 && resp.results[0]) {
       accounts.value = parseTrialBalance(resp.results[0])
     }
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Failed to load accounts', detail: e.message, life: 5000 })
   } finally {
     loading.value = false
   }
@@ -138,9 +143,18 @@ async function loadStatement() {
   if (dimKey.value && dimValue.value) {
     dim = `, ${dimKey.value}='${dimValue.value}'`
   }
-  const resp = await executeFql(`GET statement(@${id}, ${from}, ${to}${dim}) AS stmt`)
-  if (resp.success && resp.results.length > 0 && resp.results[0]) {
-    statement.value = parseStatement(resp.results[0])
+  try {
+    const resp = await executeFql(`GET statement(@${id}, ${from}, ${to}${dim}) AS stmt`)
+    if (resp.success && resp.results.length > 0 && resp.results[0]) {
+      statement.value = parseStatement(resp.results[0])
+      if (statement.value.length === 0) {
+        toast.add({ severity: 'info', summary: 'No transactions', detail: `No entries found for @${id} in this period`, life: 3000 })
+      }
+    } else if (!resp.success) {
+      toast.add({ severity: 'error', summary: 'Statement error', detail: resp.error || 'Unknown error', life: 5000 })
+    }
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Failed to load statement', detail: e.message, life: 5000 })
   }
 }
 
