@@ -59,6 +59,12 @@ pub struct InMemoryStorage {
     snapshots: RwLock<HashMap<TransactionId, Snapshot>>,
 }
 
+impl Default for InMemoryStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryStorage {
     pub fn new() -> Self {
         Self {
@@ -159,17 +165,14 @@ impl StorageBackend for InMemoryStorage {
         let journals = self.journals.read().unwrap();
 
         for e in entries {
-            match journals.get(&e.0) {
-                Some(j) => {
-                    result.push(StatementTxn {
-                        journal_id: e.0,
-                        date: j.date,
-                        description: j.description.clone(),
-                        amount: e.1,
-                        balance: e.2,
-                    });
-                },
-                None => {},
+            if let Some(j) = journals.get(&e.0) {
+                result.push(StatementTxn {
+                    journal_id: e.0,
+                    date: j.date,
+                    description: j.description.clone(),
+                    amount: e.1,
+                    balance: e.2,
+                });
             }
         }
 
@@ -258,8 +261,8 @@ impl LedgerStore {
 
     pub fn get_balance(&self, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Decimal {        
         let mut balance = Decimal::ZERO;
-        let mut days = self.days.range((Bound::Unbounded, Bound::Included(date)));
-        while let Some((_, day)) = days.next() {
+        let days = self.days.range((Bound::Unbounded, Bound::Included(date)));
+        for (_, day) in days {
             match &dimension {
                 Some(dimension) => {
                     balance += day.get_balance(dimension);
@@ -283,8 +286,8 @@ impl LedgerStore {
 
         let mut balance = self.get_balance(balance_date, dimension);
 
-        let mut days = self.days.range((from, to));
-        while let Some((_, day)) = days.next() {
+        let days = self.days.range((from, to));
+        for (_, day) in days {
             let entries = day.get_entries(dimension);
             for (jid, amt) in entries {
                 balance += amt;
@@ -297,8 +300,8 @@ impl LedgerStore {
 
     pub fn get_dimension_values(&self, dimension_key: Arc<str>, from: Date, to: Date) -> HashSet<Arc<DataValue>> {
         let mut result = HashSet::new();
-        let mut days = self.days.range((Bound::Included(from), Bound::Included(to)));
-        while let Some((_, day)) = days.next() {
+        let days = self.days.range((Bound::Included(from), Bound::Included(to)));
+        for (_, day) in days {
             let values = day.get_dimension_values(dimension_key.clone());
             result.extend(values);
         }
@@ -328,7 +331,7 @@ impl LedgerDay {
         
         self.entries.insert(journal_id, amount);
         for (k, v) in dimensions {
-            let e = self.entry_by_dimension.entry((k.clone(), v.clone())).or_insert(Vec::new());
+            let e = self.entry_by_dimension.entry((k.clone(), v.clone())).or_default();
             e.push(journal_id);
         }
         
@@ -341,7 +344,7 @@ impl LedgerDay {
         for (dimension, value) in dimensions {
             let sum = self.sum_by_dimension
                 .entry(dimension.clone())
-                .or_insert(HashMap::new())
+                .or_default()
                 .entry(value.clone())
                 .or_insert(Decimal::ZERO);
         
@@ -369,16 +372,10 @@ impl LedgerDay {
 
         match dimension {
             Some(dimension) => {
-                match self.entry_by_dimension.get(dimension) {
-                    Some(jids) => {
-                        for jid in jids {
-                            match self.entries.get(jid) {
-                                Some(amt) => result.push((*jid, *amt)),
-                                None => {},
-                            }
-                        }
-                    },
-                    None => {},
+                if let Some(jids) = self.entry_by_dimension.get(dimension) {
+                    for jid in jids {
+                        if let Some(amt) = self.entries.get(jid) { result.push((*jid, *amt)) }
+                    }
                 };
             },
             None => {

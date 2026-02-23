@@ -21,7 +21,7 @@ impl Balance {
 
 impl ScalarFunction for Balance {
     fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
-        let account_id = match args.get(0) {
+        let account_id = match args.first() {
             Some(DataValue::AccountId(id)) => id,
             _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
         };
@@ -37,7 +37,7 @@ impl ScalarFunction for Balance {
             _ => return Err(EvaluationError::InvalidArgument("dimension".to_string())),
         };
 
-        let result = self.storage.get_balance(&account_id, *effective_date, dimension)?;
+        let result = self.storage.get_balance(account_id, *effective_date, dimension)?;
 
         Ok(DataValue::Money(result))
     }
@@ -59,7 +59,7 @@ impl Statement {
 
 impl ScalarFunction for Statement {
     fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
-        let account_id = match args.get(0) {
+        let account_id = match args.first() {
             Some(DataValue::AccountId(id)) => id,
             _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
         };
@@ -80,7 +80,7 @@ impl ScalarFunction for Statement {
             _ => return Err(EvaluationError::InvalidArgument("dimension".to_string())),
         };
 
-        let result = self.storage.get_statement(&account_id, Bound::Included(*from), Bound::Included(*to), dimension)?;
+        let result = self.storage.get_statement(account_id, Bound::Included(*from), Bound::Included(*to), dimension)?;
 
         Ok(result)
     }
@@ -100,7 +100,7 @@ impl TrialBalance {
 
 impl ScalarFunction for TrialBalance {
     fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
-        let effective_date = match args.get(0) {
+        let effective_date = match args.first() {
             Some(DataValue::Date(dt)) => dt,
             _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
         };
@@ -134,7 +134,7 @@ impl IncomeStatement {
 
 impl ScalarFunction for IncomeStatement {
     fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
-        let from = match args.get(0) {
+        let from = match args.first() {
             Some(DataValue::Date(dt)) => *dt,
             _ => return Err(EvaluationError::InvalidArgument("from_date".to_string())),
         };

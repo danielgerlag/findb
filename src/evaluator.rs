@@ -173,14 +173,11 @@ impl ExpressionEvaluator {
                 ast::Literal::Percentage(p) => DataValue::Percentage(Decimal::from_str(p).unwrap_or(Decimal::ZERO)),
             },
             ast::UnaryExpression::Property { name, key } => match context.get_variable(name) {
-                Some(v) => match v {
-                    DataValue::Map(o) => match o.get(key) {
-                        Some(v) => v.clone(),
-                        None => DataValue::Null,
-                    },
-                    _ => DataValue::Null,
+                Some(DataValue::Map(o)) => match o.get(key) {
+                    Some(v) => v.clone(),
+                    None => DataValue::Null,
                 },
-                None => DataValue::Null,
+                _ => DataValue::Null,
             },
             ast::UnaryExpression::Parameter(p) => match context.get_variable(p) {
                 Some(v) => v.clone(),
@@ -433,13 +430,13 @@ impl ExpressionEvaluator {
                 Some(ref match_) => {
                     let condition = self.evaluate_expression(context, &when.0)?;
                     if condition == *match_ {
-                        return Ok(self.evaluate_expression(context, &when.1)?);
+                        return self.evaluate_expression(context, &when.1);
                     }
                 }
                 None => {
                     let condition = self.evaluate_predicate(context, &when.0)?;
                     if condition {
-                        return Ok(self.evaluate_expression(context, &when.1)?);
+                        return self.evaluate_expression(context, &when.1);
                     }
                 }
             }

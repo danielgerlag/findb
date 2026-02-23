@@ -28,10 +28,7 @@ pub enum DataValue {
 
 impl DataValue {
     pub fn is_null(&self) -> bool {
-        match self {
-            DataValue::Null => true,
-            _ => false,
-        }
+        matches!(self, DataValue::Null)
     }
 }
 
@@ -58,7 +55,7 @@ impl Display for DataValue {
                     table.add_row(row![item.date, item.description, item.amount, item.balance]);
                 }
 
-                format!("\n{}\n", table.to_string())
+                format!("\n{}\n", table)
             },
             DataValue::TrialBalance(tb) => {
                 let mut table = Table::new();
@@ -76,7 +73,7 @@ impl Display for DataValue {
                     }
                 }
 
-                format!("\n{}\n", table.to_string())
+                format!("\n{}\n", table)
             },
         };
         

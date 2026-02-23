@@ -29,6 +29,12 @@ pub struct ExecutionResult {
     pub journals_created: usize,
 }
 
+impl Default for ExecutionResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExecutionResult {
     pub fn new() -> Self {
         Self {
@@ -51,9 +57,9 @@ impl Display for ExecutionResult {
     }
 }
 
-impl Into<ExpressionEvaluationContext> for &ExecutionContext {
-    fn into(self) -> ExpressionEvaluationContext {
-        ExpressionEvaluationContext::new(self.effective_date, self.variables.clone())
+impl From<&ExecutionContext> for ExpressionEvaluationContext {
+    fn from(val: &ExecutionContext) -> Self {
+        ExpressionEvaluationContext::new(val.effective_date, val.variables.clone())
     }
 }
 
@@ -153,7 +159,7 @@ impl StatementExecutor {
         let command = CreateJournalCommand {
             date,
             description: match self.expression_evaluator.evaluate_expression(&eval_ctx, &journal.description)? {
-                DataValue::String(s) => s.into(),
+                DataValue::String(s) => s,
                 _ => return Err(EvaluationError::InvalidType),
             },
             amount: journal_amount,
@@ -185,7 +191,7 @@ impl StatementExecutor {
                     LedgerEntryCommand::Debit {
                         account_id: op.account.clone(),
                         amount: match &op.amount {
-                            Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, &amount)? {
+                            Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, amount)? {
                                 DataValue::Money(d) => d,
                                 DataValue::Int(i) => Decimal::from(i),
                                 DataValue::Percentage(p) => journal_amount * p,
@@ -199,7 +205,7 @@ impl StatementExecutor {
                     LedgerEntryCommand::Credit {
                         account_id: op.account.clone(),
                         amount: match &op.amount {
-                            Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, &amount)? {
+                            Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, amount)? {
                                 DataValue::Money(d) => d,
                                 DataValue::Int(i) => Decimal::from(i),
                                 DataValue::Percentage(p) => journal_amount * p,
@@ -267,7 +273,7 @@ impl StatementExecutor {
         let mut result = ExecutionResult::new();
 
         for expr in &get.elements {
-            let (key, value) = self.expression_evaluator.evaluate_projection_field(&eval_ctx, &expr)?;
+            let (key, value) = self.expression_evaluator.evaluate_projection_field(&eval_ctx, expr)?;
             result.variables.insert(key.into(), value);
         }
 
@@ -333,7 +339,7 @@ impl StatementExecutor {
             let amount = amount.round_dp(2);
             let dimensions = {
                 let mut dimensions = BTreeMap::new();
-                dimensions.insert(accrue.by_dimension.clone(), dimension_value.into());
+                dimensions.insert(accrue.by_dimension.clone(), dimension_value);
                 dimensions
             };
             

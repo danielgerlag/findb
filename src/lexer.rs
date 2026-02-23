@@ -250,7 +250,7 @@ peg::parser! {
                 AccrueCommand {
                     account_id,
                     rate_id,
-                    compounding: compounding,
+                    compounding,
                     start_date,
                     end_date,
                     by_dimension,

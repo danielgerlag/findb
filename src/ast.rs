@@ -299,15 +299,9 @@ pub struct CaseExpression {
 impl CaseExpression {
   pub fn case(match_: Option<Expression>, when: Vec<(Expression, Expression)>, else_: Option<Expression>) -> Expression {
     Expression::VariadicExpression(VariadicExpression::CaseExpression(CaseExpression{ 
-      match_: match match_ {
-        Some(m) => Some(Box::new(m)),
-        None => None
-      },
+      match_: match_.map(Box::new),
       when, 
-      else_ : match else_ {
-        Some(e) => Some(Box::new(e)),
-        None => None
-      }
+      else_ : else_.map(Box::new)
     }))
   }
 }

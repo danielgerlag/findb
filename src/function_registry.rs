@@ -15,14 +15,20 @@ pub struct FunctionRegistry {
   functions: Arc<RwLock<HashMap<String, Arc<Function>>>>,
 }
 
+impl Default for FunctionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FunctionRegistry {
   pub fn new() -> FunctionRegistry {
-    let result = FunctionRegistry {
+    
+
+
+    FunctionRegistry {
       functions: Arc::new(RwLock::new(HashMap::new())),
-    };
-
-
-    result
+    }
   }
 
   pub fn register_function(&self, name: &str, function: Function) {
@@ -32,9 +38,6 @@ impl FunctionRegistry {
 
   pub fn get_function(&self, name: &str) -> Option<Arc<Function>> {
     let lock = self.functions.read().unwrap();
-    match lock.get(name) {
-      Some(f) => Some(f.clone()),
-      None => None,
-    }
+    lock.get(name).cloned()
   }
 }
