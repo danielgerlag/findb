@@ -541,6 +541,709 @@ fn test_multi_currency_conversion() {
     }
 }
 
+// =============================================================================
+// Real-world end-to-end scenario tests
+// =============================================================================
+
+/// E-commerce business operating over Q1 2023:
+/// - Processes sales with tax across multiple months
+/// - Handles refunds that reverse prior entries
+/// - Verifies monthly balances, trial balance integrity, and income statement
+#[test]
+fn test_ecommerce_quarterly_lifecycle() {
+    let (exec, mut ctx) = setup();
+
+    // Set up chart of accounts
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @accounts_receivable ASSET;
+        CREATE ACCOUNT @inventory ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @cogs EXPENSE;
+        CREATE ACCOUNT @refunds EXPENSE;
+        CREATE ACCOUNT @tax_payable LIABILITY;
+
+        CREATE RATE sales_tax;
+        SET RATE sales_tax 0.08 2023-01-01;
+    ");
+
+    // January: Initial capital + inventory purchase + 3 sales
+    execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2023-01-01, 100000, 'Initial investment'
+        CREDIT @equity, DEBIT @bank;
+
+        CREATE JOURNAL 2023-01-02, 30000, 'Inventory purchase'
+        CREDIT @bank, DEBIT @inventory;
+
+        CREATE JOURNAL 2023-01-10, 500, 'Order #1001'
+        FOR Customer='Alice', Channel='Web'
+        CREDIT @revenue, DEBIT @bank,
+        CREDIT @tax_payable WITH RATE sales_tax,
+        DEBIT @bank WITH RATE sales_tax;
+
+        CREATE JOURNAL 2023-01-10, 200, 'COGS for Order #1001'
+        FOR Customer='Alice', Channel='Web'
+        CREDIT @inventory, DEBIT @cogs;
+
+        CREATE JOURNAL 2023-01-15, 1200, 'Order #1002'
+        FOR Customer='Bob', Channel='Store'
+        CREDIT @revenue, DEBIT @bank,
+        CREDIT @tax_payable WITH RATE sales_tax,
+        DEBIT @bank WITH RATE sales_tax;
+
+        CREATE JOURNAL 2023-01-15, 480, 'COGS for Order #1002'
+        FOR Customer='Bob', Channel='Store'
+        CREDIT @inventory, DEBIT @cogs;
+
+        CREATE JOURNAL 2023-01-25, 800, 'Order #1003'
+        FOR Customer='Carol', Channel='Web'
+        CREDIT @revenue, DEBIT @bank,
+        CREDIT @tax_payable WITH RATE sales_tax,
+        DEBIT @bank WITH RATE sales_tax;
+
+        CREATE JOURNAL 2023-01-25, 320, 'COGS for Order #1003'
+        FOR Customer='Carol', Channel='Web'
+        CREDIT @inventory, DEBIT @cogs;
+    ");
+
+    // Verify January month-end
+    let jan_results = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@bank, 2023-01-31) AS bank_jan,
+            balance(@revenue, 2023-01-31) AS revenue_jan,
+            balance(@cogs, 2023-01-31) AS cogs_jan,
+            balance(@inventory, 2023-01-31) AS inventory_jan,
+            balance(@tax_payable, 2023-01-31) AS tax_jan,
+            trial_balance(2023-01-31) AS tb_jan
+    ");
+
+    let r = &jan_results[0];
+    // Bank: 100000 - 30000 + 540 + 1296 + 864 = 72700
+    // (each sale: amount + amount*0.08 tax)
+    match &r.variables["bank_jan"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(72700)),
+        v => panic!("Expected bank=72700, got {:?}", v),
+    }
+    // Revenue: 500 + 1200 + 800 = 2500
+    match &r.variables["revenue_jan"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(2500)),
+        v => panic!("Expected revenue=2500, got {:?}", v),
+    }
+    // COGS: 200 + 480 + 320 = 1000
+    match &r.variables["cogs_jan"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(1000)),
+        v => panic!("Expected cogs=1000, got {:?}", v),
+    }
+    // Tax payable: 2500 * 0.08 = 200
+    match &r.variables["tax_jan"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(200)),
+        v => panic!("Expected tax=200, got {:?}", v),
+    }
+    // Trial balance must balance
+    assert_trial_balance_balanced(&r.variables["tb_jan"], "Jan month-end");
+
+    // February: Refund for Order #1003, 2 more sales
+    execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2023-02-05, 800, 'Refund Order #1003'
+        FOR Customer='Carol', Channel='Web'
+        DEBIT @revenue, CREDIT @bank,
+        DEBIT @tax_payable WITH RATE sales_tax,
+        CREDIT @bank WITH RATE sales_tax;
+
+        CREATE JOURNAL 2023-02-05, 320, 'Reverse COGS for Order #1003'
+        FOR Customer='Carol', Channel='Web'
+        DEBIT @inventory, CREDIT @cogs;
+
+        CREATE JOURNAL 2023-02-10, 2000, 'Order #2001'
+        FOR Customer='Dave', Channel='Web'
+        CREDIT @revenue, DEBIT @bank,
+        CREDIT @tax_payable WITH RATE sales_tax,
+        DEBIT @bank WITH RATE sales_tax;
+
+        CREATE JOURNAL 2023-02-10, 800, 'COGS for Order #2001'
+        FOR Customer='Dave', Channel='Web'
+        CREDIT @inventory, DEBIT @cogs;
+
+        CREATE JOURNAL 2023-02-20, 3000, 'Order #2002'
+        FOR Customer='Eve', Channel='Store'
+        CREDIT @revenue, DEBIT @bank,
+        CREDIT @tax_payable WITH RATE sales_tax,
+        DEBIT @bank WITH RATE sales_tax;
+
+        CREATE JOURNAL 2023-02-20, 1200, 'COGS for Order #2002'
+        FOR Customer='Eve', Channel='Store'
+        CREDIT @inventory, DEBIT @cogs;
+    ");
+
+    // March: Tax payment + more sales
+    execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2023-03-01, 200, 'Q1 tax remittance (Jan)'
+        DEBIT @tax_payable, CREDIT @bank;
+
+        CREATE JOURNAL 2023-03-15, 1500, 'Order #3001'
+        FOR Customer='Frank', Channel='Web'
+        CREDIT @revenue, DEBIT @bank,
+        CREDIT @tax_payable WITH RATE sales_tax,
+        DEBIT @bank WITH RATE sales_tax;
+
+        CREATE JOURNAL 2023-03-15, 600, 'COGS for Order #3001'
+        FOR Customer='Frank', Channel='Web'
+        CREDIT @inventory, DEBIT @cogs;
+    ");
+
+    // Verify Q1 end
+    let q1_results = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@revenue, 2023-03-31) AS revenue_q1,
+            balance(@cogs, 2023-03-31) AS cogs_q1,
+            income_statement(2023-01-01, 2023-03-31) AS pnl_q1,
+            trial_balance(2023-03-31) AS tb_q1,
+            account_count() AS num_accounts
+    ");
+
+    let q1 = &q1_results[0];
+    // Revenue: 2500 - 800(refund) + 2000 + 3000 + 1500 = 8200
+    match &q1.variables["revenue_q1"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(8200)),
+        v => panic!("Expected revenue=8200, got {:?}", v),
+    }
+    // COGS: 1000 - 320(reverse) + 800 + 1200 + 600 = 3280
+    match &q1.variables["cogs_q1"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(3280)),
+        v => panic!("Expected cogs=3280, got {:?}", v),
+    }
+    // Income statement: Net Income = Revenue - Refunds - COGS = 8200 - 3280 = 4920
+    match &q1.variables["pnl_q1"] {
+        DataValue::TrialBalance(items) => {
+            let net = items.iter().find(|i| i.account_id.as_ref() == "NET_INCOME").unwrap();
+            assert_eq!(net.balance, rust_decimal::Decimal::from(4920), "Q1 net income should be 4920");
+        },
+        v => panic!("Expected TrialBalance, got {:?}", v),
+    }
+    assert_trial_balance_balanced(&q1.variables["tb_q1"], "Q1 end");
+
+    match &q1.variables["num_accounts"] {
+        DataValue::Int(n) => assert_eq!(*n, 8),
+        v => panic!("Expected 8 accounts, got {:?}", v),
+    }
+
+    // Verify dimension filtering — Web channel revenue
+    let dim_results = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@revenue, 2023-03-31, Channel='Web') AS web_revenue,
+            balance(@revenue, 2023-03-31, Channel='Store') AS store_revenue
+    ");
+    let d = &dim_results[0];
+    // Web: 500 + 800(refunded) - 800 + 2000 + 1500 = 4000
+    match &d.variables["web_revenue"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(4000)),
+        v => panic!("Expected web_revenue=4000, got {:?}", v),
+    }
+    // Store: 1200 + 3000 = 4200
+    match &d.variables["store_revenue"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(4200)),
+        v => panic!("Expected store_revenue=4200, got {:?}", v),
+    }
+}
+
+/// Multi-department company with monthly expense tracking:
+/// - Engineering, Sales, and Marketing departments
+/// - Operating expenses, payroll, travel
+/// - Verifies per-department balances and consolidated trial balance
+#[test]
+fn test_multi_department_expense_tracking() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @salaries EXPENSE;
+        CREATE ACCOUNT @travel EXPENSE;
+        CREATE ACCOUNT @software EXPENSE;
+        CREATE ACCOUNT @marketing_spend EXPENSE;
+        CREATE ACCOUNT @revenue INCOME;
+
+        CREATE JOURNAL 2023-01-01, 500000, 'Series A funding'
+        CREDIT @equity, DEBIT @bank;
+    ");
+
+    // January payroll by department
+    execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2023-01-31, 50000, 'Jan payroll - Engineering'
+        FOR Department='Engineering'
+        CREDIT @bank, DEBIT @salaries;
+
+        CREATE JOURNAL 2023-01-31, 30000, 'Jan payroll - Sales'
+        FOR Department='Sales'
+        CREDIT @bank, DEBIT @salaries;
+
+        CREATE JOURNAL 2023-01-31, 20000, 'Jan payroll - Marketing'
+        FOR Department='Marketing'
+        CREDIT @bank, DEBIT @salaries;
+    ");
+
+    // February payroll + department-specific expenses
+    execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2023-02-28, 50000, 'Feb payroll - Engineering'
+        FOR Department='Engineering'
+        CREDIT @bank, DEBIT @salaries;
+
+        CREATE JOURNAL 2023-02-28, 30000, 'Feb payroll - Sales'
+        FOR Department='Sales'
+        CREDIT @bank, DEBIT @salaries;
+
+        CREATE JOURNAL 2023-02-28, 20000, 'Feb payroll - Marketing'
+        FOR Department='Marketing'
+        CREDIT @bank, DEBIT @salaries;
+
+        CREATE JOURNAL 2023-02-15, 5000, 'AWS bill'
+        FOR Department='Engineering'
+        CREDIT @bank, DEBIT @software;
+
+        CREATE JOURNAL 2023-02-10, 3000, 'Sales conference travel'
+        FOR Department='Sales'
+        CREDIT @bank, DEBIT @travel;
+
+        CREATE JOURNAL 2023-02-20, 15000, 'Ad campaign'
+        FOR Department='Marketing'
+        CREDIT @bank, DEBIT @marketing_spend;
+    ");
+
+    // Some revenue comes in
+    execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2023-02-15, 80000, 'Feb subscription revenue'
+        CREDIT @revenue, DEBIT @bank;
+    ");
+
+    // Verify department-level expense reporting
+    let results = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@salaries, 2023-02-28, Department='Engineering') AS eng_sal,
+            balance(@salaries, 2023-02-28, Department='Sales') AS sales_sal,
+            balance(@salaries, 2023-02-28, Department='Marketing') AS mkt_sal,
+            balance(@salaries, 2023-02-28) AS total_sal,
+            balance(@software, 2023-02-28, Department='Engineering') AS eng_sw,
+            balance(@travel, 2023-02-28, Department='Sales') AS sales_travel,
+            balance(@marketing_spend, 2023-02-28, Department='Marketing') AS mkt_ads,
+            income_statement(2023-01-01, 2023-02-28) AS pnl,
+            trial_balance(2023-02-28) AS tb
+    ");
+
+    let r = &results[0];
+
+    // Per-department salary verification
+    match &r.variables["eng_sal"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(100000)),
+        v => panic!("Expected eng salaries=100000, got {:?}", v),
+    }
+    match &r.variables["sales_sal"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(60000)),
+        v => panic!("Expected sales salaries=60000, got {:?}", v),
+    }
+    match &r.variables["mkt_sal"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(40000)),
+        v => panic!("Expected marketing salaries=40000, got {:?}", v),
+    }
+    // Total salaries = 100000 + 60000 + 40000 = 200000
+    match &r.variables["total_sal"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(200000)),
+        v => panic!("Expected total salaries=200000, got {:?}", v),
+    }
+
+    // Income statement: Revenue 80000, Expenses 200000+5000+3000+15000 = 223000
+    // Net = 80000 - 223000 = -143000
+    match &r.variables["pnl"] {
+        DataValue::TrialBalance(items) => {
+            let net = items.iter().find(|i| i.account_id.as_ref() == "NET_INCOME").unwrap();
+            assert_eq!(net.balance, rust_decimal::Decimal::from(-143000), "Net income should be -143000 (burn)");
+        },
+        v => panic!("Expected TrialBalance, got {:?}", v),
+    }
+
+    assert_trial_balance_balanced(&r.variables["tb"], "Feb month-end");
+
+    // Verify bank account statement shows all transactions
+    let stmt_results = execute_script(&exec, &mut ctx, "
+        GET statement(@bank, 2023-01-01, 2023-02-28) AS bank_stmt
+    ");
+    match &stmt_results[0].variables["bank_stmt"] {
+        DataValue::Statement(txns) => {
+            assert_eq!(txns.len(), 11, "Bank should have 11 transactions");
+            // Final balance: 500000 - 100000 - 100000 - 5000 - 3000 - 15000 + 80000 = 357000
+            let last = txns.last().unwrap();
+            assert_eq!(last.balance, rust_decimal::Decimal::from(357000));
+        },
+        v => panic!("Expected Statement, got {:?}", v),
+    }
+}
+
+/// Lending fund with multiple accrual periods and rate changes:
+/// - Loans issued at different times
+/// - Interest rate changes mid-period
+/// - Multiple accrual runs (monthly)
+/// - Loan repayment
+/// - Verifies interest compounds correctly across periods
+#[test]
+fn test_lending_fund_multi_period_accruals() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @loans ASSET;
+        CREATE ACCOUNT @interest_receivable ASSET;
+        CREATE ACCOUNT @interest_income INCOME;
+        CREATE ACCOUNT @equity EQUITY;
+
+        CREATE RATE prime;
+        SET RATE prime 0.05 2023-01-01;
+
+        CREATE JOURNAL 2023-01-01, 1000000, 'Fund capital'
+        CREDIT @equity, DEBIT @bank;
+
+        CREATE JOURNAL 2023-01-15, 100000, 'Loan to Acme Corp'
+        FOR Borrower='Acme', LoanType='Term'
+        DEBIT @loans, CREDIT @bank;
+
+        CREATE JOURNAL 2023-02-01, 50000, 'Loan to Beta Inc'
+        FOR Borrower='Beta', LoanType='Term'
+        DEBIT @loans, CREDIT @bank;
+    ");
+
+    // Month 1 accrual: Jan 15 - Jan 31 (Acme only, 16 days)
+    execute_script(&exec, &mut ctx, "
+        ACCRUE @loans FROM 2023-01-15 TO 2023-01-31
+        WITH RATE prime COMPOUND DAILY
+        BY Borrower
+        INTO JOURNAL
+            2023-02-01, 'Jan interest accrual'
+        DEBIT @interest_receivable,
+        CREDIT @interest_income;
+    ");
+
+    let jan_results = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@interest_income, 2023-02-01) AS jan_interest,
+            balance(@interest_receivable, 2023-02-01, Borrower='Acme') AS acme_jan_int,
+            trial_balance(2023-02-01) AS tb_jan
+    ");
+
+    let r = &jan_results[0];
+    // Interest should be small but > 0 (about 100000 * 0.05/365 * 16 ≈ 219)
+    match &r.variables["jan_interest"] {
+        DataValue::Money(m) => {
+            assert!(*m > rust_decimal::Decimal::ZERO, "Jan interest should be > 0");
+            assert!(*m < rust_decimal::Decimal::from(300), "Jan interest should be reasonable");
+        },
+        v => panic!("Expected Money, got {:?}", v),
+    }
+    assert_trial_balance_balanced(&r.variables["tb_jan"], "Jan accrual");
+
+    // Rate change mid-February
+    execute_script(&exec, &mut ctx, "
+        SET RATE prime 0.065 2023-02-15;
+    ");
+
+    // Month 2 accrual: Feb 1 - Feb 28 (both borrowers, rate changes mid-month)
+    execute_script(&exec, &mut ctx, "
+        ACCRUE @loans FROM 2023-02-01 TO 2023-02-28
+        WITH RATE prime COMPOUND DAILY
+        BY Borrower
+        INTO JOURNAL
+            2023-03-01, 'Feb interest accrual'
+        DEBIT @interest_receivable,
+        CREDIT @interest_income;
+    ");
+
+    let feb_results = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@interest_income, 2023-03-01) AS total_interest,
+            balance(@interest_receivable, 2023-03-01, Borrower='Acme') AS acme_total_int,
+            balance(@interest_receivable, 2023-03-01, Borrower='Beta') AS beta_total_int,
+            trial_balance(2023-03-01) AS tb_feb
+    ");
+
+    let r2 = &feb_results[0];
+    // Both borrowers should have accrued interest
+    match &r2.variables["acme_total_int"] {
+        DataValue::Money(m) => assert!(*m > rust_decimal::Decimal::ZERO, "Acme should have interest"),
+        v => panic!("Expected Money, got {:?}", v),
+    }
+    match &r2.variables["beta_total_int"] {
+        DataValue::Money(m) => assert!(*m > rust_decimal::Decimal::ZERO, "Beta should have interest"),
+        v => panic!("Expected Money, got {:?}", v),
+    }
+    // Total interest should be > Jan interest (compounding + 2nd borrower)
+    match (&r.variables["jan_interest"], &r2.variables["total_interest"]) {
+        (DataValue::Money(jan), DataValue::Money(total)) => {
+            assert!(total > jan, "Total interest after Feb should exceed Jan-only interest");
+        },
+        _ => panic!("Expected Money values"),
+    }
+    assert_trial_balance_balanced(&r2.variables["tb_feb"], "Feb accrual");
+
+    // Borrower Beta repays loan + interest in March
+    let repay_results = execute_script(&exec, &mut ctx, "
+        GET balance(@loans, 2023-03-01, Borrower='Beta') AS beta_loan,
+            balance(@interest_receivable, 2023-03-01, Borrower='Beta') AS beta_interest
+    ");
+    let beta_loan = match &repay_results[0].variables["beta_loan"] {
+        DataValue::Money(m) => *m,
+        v => panic!("Expected Money, got {:?}", v),
+    };
+    let beta_interest = match &repay_results[0].variables["beta_interest"] {
+        DataValue::Money(m) => *m,
+        v => panic!("Expected Money, got {:?}", v),
+    };
+
+    let repayment_fql = format!(
+        "CREATE JOURNAL 2023-03-15, {}, 'Beta loan repayment' FOR Borrower='Beta' CREDIT @loans, DEBIT @bank;
+         CREATE JOURNAL 2023-03-15, {}, 'Beta interest payment' FOR Borrower='Beta' CREDIT @interest_receivable, DEBIT @bank;",
+        beta_loan, beta_interest
+    );
+    execute_script(&exec, &mut ctx, &repayment_fql);
+
+    // After repayment, Beta's loan and interest should be zero
+    let post_repay = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@loans, 2023-03-31, Borrower='Beta') AS beta_loan_after,
+            balance(@interest_receivable, 2023-03-31, Borrower='Beta') AS beta_int_after,
+            balance(@loans, 2023-03-31, Borrower='Acme') AS acme_loan_after,
+            trial_balance(2023-03-31) AS tb_mar
+    ");
+
+    let r3 = &post_repay[0];
+    match &r3.variables["beta_loan_after"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::ZERO, "Beta loan should be fully repaid"),
+        v => panic!("Expected Money, got {:?}", v),
+    }
+    match &r3.variables["beta_int_after"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::ZERO, "Beta interest should be fully collected"),
+        v => panic!("Expected Money, got {:?}", v),
+    }
+    // Acme's loan should still be outstanding
+    match &r3.variables["acme_loan_after"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(100000), "Acme loan should remain"),
+        v => panic!("Expected Money, got {:?}", v),
+    }
+    assert_trial_balance_balanced(&r3.variables["tb_mar"], "Mar post-repayment");
+}
+
+/// Multi-currency international business:
+/// - US parent company with EUR subsidiary operations
+/// - Records transactions in USD, converts EUR at spot rates
+/// - Verifies FX conversion accuracy across rate changes
+#[test]
+fn test_international_multi_currency_operations() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank_usd ASSET;
+        CREATE ACCOUNT @bank_eur ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @revenue_domestic INCOME;
+        CREATE ACCOUNT @revenue_international INCOME;
+        CREATE ACCOUNT @fx_revaluation EXPENSE;
+
+        CREATE RATE usd_eur;
+        SET RATE usd_eur 0.85 2023-01-01;
+        SET RATE usd_eur 0.88 2023-02-01;
+        SET RATE usd_eur 0.92 2023-03-01;
+
+        CREATE JOURNAL 2023-01-01, 200000, 'Initial capital'
+        CREDIT @equity, DEBIT @bank_usd;
+    ");
+
+    // Q1 domestic and international sales
+    execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2023-01-15, 50000, 'US sales Jan'
+        FOR Region='US'
+        CREDIT @revenue_domestic, DEBIT @bank_usd;
+
+        CREATE JOURNAL 2023-02-15, 60000, 'US sales Feb'
+        FOR Region='US'
+        CREDIT @revenue_domestic, DEBIT @bank_usd;
+
+        CREATE JOURNAL 2023-03-15, 45000, 'US sales Mar'
+        FOR Region='US'
+        CREDIT @revenue_domestic, DEBIT @bank_usd;
+
+        CREATE JOURNAL 2023-01-20, 30000, 'EU sales Jan'
+        FOR Region='EU'
+        CREDIT @revenue_international, DEBIT @bank_eur;
+
+        CREATE JOURNAL 2023-02-20, 40000, 'EU sales Feb'
+        FOR Region='EU'
+        CREDIT @revenue_international, DEBIT @bank_eur;
+
+        CREATE JOURNAL 2023-03-20, 35000, 'EU sales Mar'
+        FOR Region='EU'
+        CREDIT @revenue_international, DEBIT @bank_eur;
+    ");
+
+    // Verify balances and FX conversions
+    let results = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@revenue_domestic, 2023-03-31) AS us_rev,
+            balance(@revenue_international, 2023-03-31) AS eu_rev,
+            balance(@bank_usd, 2023-03-31) AS usd_bank,
+            balance(@bank_eur, 2023-03-31) AS eur_bank,
+            convert(105000, 'usd_eur', 2023-03-31) AS eur_pool_in_eur,
+            fx_rate('usd_eur', 2023-01-15) AS jan_rate,
+            fx_rate('usd_eur', 2023-02-15) AS feb_rate,
+            fx_rate('usd_eur', 2023-03-15) AS mar_rate,
+            trial_balance(2023-03-31) AS tb,
+            income_statement(2023-01-01, 2023-03-31) AS pnl
+    ");
+
+    let r = &results[0];
+
+    // Domestic revenue: 50000 + 60000 + 45000 = 155000
+    match &r.variables["us_rev"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(155000)),
+        v => panic!("Expected 155000, got {:?}", v),
+    }
+    // International revenue: 30000 + 40000 + 35000 = 105000
+    match &r.variables["eu_rev"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(105000)),
+        v => panic!("Expected 105000, got {:?}", v),
+    }
+
+    // FX rates by period
+    match &r.variables["jan_rate"] {
+        DataValue::Money(m) => assert_eq!(m.to_string(), "0.85"),
+        v => panic!("Expected 0.85, got {:?}", v),
+    }
+    match &r.variables["feb_rate"] {
+        DataValue::Money(m) => assert_eq!(m.to_string(), "0.88"),
+        v => panic!("Expected 0.88, got {:?}", v),
+    }
+    match &r.variables["mar_rate"] {
+        DataValue::Money(m) => assert_eq!(m.to_string(), "0.92"),
+        v => panic!("Expected 0.92, got {:?}", v),
+    }
+
+    // EUR equivalent of 105000 USD at March rate (0.92): 96600
+    match &r.variables["eur_pool_in_eur"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(96600)),
+        v => panic!("Expected 96600, got {:?}", v),
+    }
+
+    assert_trial_balance_balanced(&r.variables["tb"], "Q1 multi-currency");
+
+    // Income statement should show total revenue - expenses
+    match &r.variables["pnl"] {
+        DataValue::TrialBalance(items) => {
+            let net = items.iter().find(|i| i.account_id.as_ref() == "NET_INCOME").unwrap();
+            // Net = 155000 + 105000 = 260000 (no expenses)
+            assert_eq!(net.balance, rust_decimal::Decimal::from(260000));
+        },
+        v => panic!("Expected TrialBalance, got {:?}", v),
+    }
+}
+
+/// Transaction safety under complex multi-statement scripts:
+/// - Verifies implicit transaction wrapping with many statements
+/// - Tests that partial failure in a large batch rolls back everything
+/// - Verifies successful batch commits atomically
+#[test]
+fn test_complex_transaction_atomicity() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @expenses EXPENSE;
+    ");
+
+    // Successful batch: 10 journals in one script
+    let mut big_script = String::new();
+    for i in 1..=10 {
+        big_script.push_str(&format!(
+            "CREATE JOURNAL 2023-01-{:02}, {}, 'Batch txn {}' CREDIT @equity, DEBIT @bank;\n",
+            i, i * 100, i
+        ));
+    }
+    big_script.push_str("GET balance(@bank, 2023-01-31) AS total");
+
+    let results = execute_script(&exec, &mut ctx, &big_script);
+    let total = &results.last().unwrap().variables["total"];
+    // Sum: 100 + 200 + ... + 1000 = 5500
+    match total {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(5500)),
+        v => panic!("Expected 5500, got {:?}", v),
+    }
+
+    // Now test failure rollback: batch that fails partway
+    let failing_script = "
+        CREATE JOURNAL 2023-02-01, 999, 'Should be rolled back' CREDIT @equity, DEBIT @bank;
+        CREATE JOURNAL 2023-02-02, 888, 'Should be rolled back' CREDIT @equity, DEBIT @bank;
+        CREATE JOURNAL 2023-02-03, 777, 'Fail here' CREDIT @nonexistent, DEBIT @bank;
+    ";
+    let statements = lexer::parse(failing_script).unwrap();
+    let result = exec.execute_script(&mut ctx, &statements);
+    assert!(result.is_err());
+
+    // Bank balance should still be 5500 — the failing batch was fully rolled back
+    let check = execute_script(&exec, &mut ctx, "
+        GET balance(@bank, 2023-12-31) AS bank_after
+    ");
+    match &check[0].variables["bank_after"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(5500), "Balance must not change after failed batch"),
+        v => panic!("Expected 5500, got {:?}", v),
+    }
+
+    // Explicit transaction: BEGIN, multiple ops, COMMIT
+    execute_script(&exec, &mut ctx, "
+        BEGIN;
+        CREATE JOURNAL 2023-03-01, 1000, 'In explicit tx 1' CREDIT @revenue, DEBIT @bank;
+        CREATE JOURNAL 2023-03-02, 2000, 'In explicit tx 2' CREDIT @revenue, DEBIT @bank;
+        CREATE JOURNAL 2023-03-03, 500, 'In explicit tx 3' CREDIT @bank, DEBIT @expenses;
+        COMMIT;
+    ");
+
+    let final_check = execute_script(&exec, &mut ctx, "
+        GET
+            balance(@bank, 2023-12-31) AS final_bank,
+            balance(@revenue, 2023-12-31) AS final_revenue,
+            trial_balance(2023-12-31) AS tb
+    ");
+    let f = &final_check[0];
+    // Bank: 5500 + 1000 + 2000 - 500 = 8000
+    match &f.variables["final_bank"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(8000)),
+        v => panic!("Expected 8000, got {:?}", v),
+    }
+    match &f.variables["final_revenue"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(3000)),
+        v => panic!("Expected 3000, got {:?}", v),
+    }
+    assert_trial_balance_balanced(&f.variables["tb"], "Final after explicit tx");
+}
+
+/// Helper: assert that a trial balance DataValue is balanced (debits == credits)
+fn assert_trial_balance_balanced(tb_val: &DataValue, label: &str) {
+    match tb_val {
+        DataValue::TrialBalance(items) => {
+            let mut total_debit = rust_decimal::Decimal::ZERO;
+            let mut total_credit = rust_decimal::Decimal::ZERO;
+            for item in items {
+                match item.account_type {
+                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                        total_debit += item.balance;
+                    },
+                    _ => {
+                        total_credit += item.balance;
+                    },
+                }
+            }
+            assert_eq!(total_debit, total_credit, "Trial balance not balanced at: {}", label);
+        },
+        v => panic!("Expected TrialBalance at {}, got {:?}", label, v),
+    }
+}
+
 // --- SQLite backend tests ---
 
 fn setup_sqlite() -> (StatementExecutor, ExecutionContext) {

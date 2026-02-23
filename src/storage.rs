@@ -248,15 +248,8 @@ impl LedgerStore {
             AccountType::Asset | AccountType::Expense => amount,
             AccountType::Liability | AccountType::Equity | AccountType::Income => -amount,
         };
-        //todo: get prev day balances
         let day = self.days.entry(date).or_insert(LedgerDay::new());
         day.add_entry(journal_id, amount, dimensions);
-
-        let future_days = self.days.range_mut((Bound::Excluded(date), Bound::Unbounded));
-        for (_fd, fe) in future_days {
-            fe.increment_balance(dimensions, amount);
-        }
-        
     }
 
     pub fn get_balance(&self, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Decimal {        
