@@ -2,20 +2,30 @@ use std::sync::Arc;
 
 use findb::evaluator::{ExpressionEvaluator, QueryVariables};
 use findb::function_registry::{FunctionRegistry, Function};
-use findb::functions::{Balance, Statement, TrialBalance, IncomeStatement, AccountCount};
+use findb::functions::{Balance, Statement, TrialBalance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max};
 use findb::lexer;
 use findb::models::DataValue;
 use findb::statement_executor::{ExecutionContext, StatementExecutor};
 use findb::storage::InMemoryStorage;
 
+fn register_functions(registry: &FunctionRegistry, storage: &Arc<dyn findb::storage::StorageBackend>) {
+    registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
+    registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
+    registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
+    registry.register_function("income_statement", Function::Scalar(Arc::new(IncomeStatement::new(storage.clone()))));
+    registry.register_function("account_count", Function::Scalar(Arc::new(AccountCount::new(storage.clone()))));
+    registry.register_function("convert", Function::Scalar(Arc::new(Convert::new(storage.clone()))));
+    registry.register_function("fx_rate", Function::Scalar(Arc::new(FxRate::new(storage.clone()))));
+    registry.register_function("round", Function::Scalar(Arc::new(Round)));
+    registry.register_function("abs", Function::Scalar(Arc::new(Abs)));
+    registry.register_function("min", Function::Scalar(Arc::new(Min)));
+    registry.register_function("max", Function::Scalar(Arc::new(Max)));
+}
+
 fn setup() -> (StatementExecutor, ExecutionContext) {
-    let storage = Arc::new(InMemoryStorage::new());
+    let storage: Arc<dyn findb::storage::StorageBackend> = Arc::new(InMemoryStorage::new());
     let function_registry = FunctionRegistry::new();
-    function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
-    function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
-    function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
-    function_registry.register_function("income_statement", Function::Scalar(Arc::new(IncomeStatement::new(storage.clone()))));
-    function_registry.register_function("account_count", Function::Scalar(Arc::new(AccountCount::new(storage.clone()))));
+    register_functions(&function_registry, &storage);
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
     let eff_date = time::OffsetDateTime::now_utc().date();
@@ -470,18 +480,74 @@ fn test_account_count() {
     }
 }
 
+#[test]
+fn test_multi_currency_conversion() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank_usd ASSET;
+        CREATE ACCOUNT @bank_eur ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+
+        CREATE RATE usd_eur;
+        SET RATE usd_eur 0.85 2023-01-01;
+        SET RATE usd_eur 0.92 2023-06-01;
+
+        CREATE JOURNAL 2023-01-01, 10000, 'Initial USD' CREDIT @equity, DEBIT @bank_usd;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET
+            convert(1000, 'usd_eur', 2023-03-01) AS jan_rate,
+            convert(1000, 'usd_eur', 2023-07-01) AS jun_rate,
+            fx_rate('usd_eur', 2023-03-01) AS rate_jan,
+            round(123.456789, 2) AS rounded,
+            abs(0 - 500) AS absolute,
+            min(100, 200) AS minimum,
+            max(100, 200) AS maximum
+    ");
+
+    let r = &results[0];
+    match &r.variables["jan_rate"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(850)),
+        v => panic!("Expected 850, got {:?}", v),
+    }
+    match &r.variables["jun_rate"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(920)),
+        v => panic!("Expected 920, got {:?}", v),
+    }
+    match &r.variables["rate_jan"] {
+        DataValue::Money(m) => assert_eq!(m.to_string(), "0.85"),
+        v => panic!("Expected 0.85, got {:?}", v),
+    }
+    match &r.variables["rounded"] {
+        DataValue::Money(m) => assert_eq!(m.to_string(), "123.46"),
+        v => panic!("Expected 123.46, got {:?}", v),
+    }
+    match &r.variables["absolute"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(500)),
+        DataValue::Int(i) => assert_eq!(*i, 500),
+        v => panic!("Expected 500, got {:?}", v),
+    }
+    match &r.variables["minimum"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(100)),
+        DataValue::Int(i) => assert_eq!(*i, 100),
+        v => panic!("Expected 100, got {:?}", v),
+    }
+    match &r.variables["maximum"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(200)),
+        DataValue::Int(i) => assert_eq!(*i, 200),
+        v => panic!("Expected 200, got {:?}", v),
+    }
+}
+
 // --- SQLite backend tests ---
 
 fn setup_sqlite() -> (StatementExecutor, ExecutionContext) {
     use findb::sqlite_storage::SqliteStorage;
-    use findb::storage::StorageBackend;
-    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(":memory:").unwrap());
+    let storage: Arc<dyn findb::storage::StorageBackend> = Arc::new(SqliteStorage::new(":memory:").unwrap());
     let function_registry = FunctionRegistry::new();
-    function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
-    function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
-    function_registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
-    function_registry.register_function("income_statement", Function::Scalar(Arc::new(IncomeStatement::new(storage.clone()))));
-    function_registry.register_function("account_count", Function::Scalar(Arc::new(AccountCount::new(storage.clone()))));
+    register_functions(&function_registry, &storage);
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage);
     let eff_date = time::OffsetDateTime::now_utc().date();

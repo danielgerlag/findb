@@ -200,3 +200,140 @@ impl ScalarFunction for AccountCount {
         Ok(DataValue::Int(count as i64))
     }
 }
+
+/// convert(amount, rate_name, date) — Converts an amount using an FX rate.
+/// Example: convert(1000, usd_eur, 2023-07-01) multiplies 1000 by the usd_eur rate.
+pub struct Convert {
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl Convert {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self { storage }
+    }
+}
+
+impl ScalarFunction for Convert {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let amount = match args.first() {
+            Some(DataValue::Money(m)) => *m,
+            Some(DataValue::Int(i)) => Decimal::from(*i),
+            _ => return Err(EvaluationError::InvalidArgument("amount".to_string())),
+        };
+
+        let rate_id = match args.get(1) {
+            Some(DataValue::String(s)) => s.clone(),
+            Some(DataValue::AccountId(s)) => s.clone(),
+            _ => return Err(EvaluationError::InvalidArgument("rate_name".to_string())),
+        };
+
+        let date = match args.get(2) {
+            Some(DataValue::Date(d)) => *d,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let rate = self.storage.get_rate(&rate_id, date)?;
+        Ok(DataValue::Money(amount * rate))
+    }
+}
+
+/// fx_rate(rate_name, date) — Returns the FX rate value at a given date.
+pub struct FxRate {
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl FxRate {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self { storage }
+    }
+}
+
+impl ScalarFunction for FxRate {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let rate_id = match args.first() {
+            Some(DataValue::String(s)) => s.clone(),
+            Some(DataValue::AccountId(s)) => s.clone(),
+            _ => return Err(EvaluationError::InvalidArgument("rate_name".to_string())),
+        };
+
+        let date = match args.get(1) {
+            Some(DataValue::Date(d)) => *d,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let rate = self.storage.get_rate(&rate_id, date)?;
+        Ok(DataValue::Money(rate))
+    }
+}
+
+/// round(value, decimal_places) — Rounds a monetary value to N decimal places.
+pub struct Round;
+
+impl ScalarFunction for Round {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let value = match args.first() {
+            Some(DataValue::Money(m)) => *m,
+            Some(DataValue::Int(i)) => Decimal::from(*i),
+            _ => return Err(EvaluationError::InvalidArgument("value".to_string())),
+        };
+
+        let places = match args.get(1) {
+            Some(DataValue::Int(n)) => *n as u32,
+            None => 2, // default to 2 decimal places
+            _ => return Err(EvaluationError::InvalidArgument("decimal_places".to_string())),
+        };
+
+        Ok(DataValue::Money(value.round_dp(places)))
+    }
+}
+
+/// abs(value) — Returns absolute value.
+pub struct Abs;
+
+impl ScalarFunction for Abs {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        match args.first() {
+            Some(DataValue::Money(m)) => Ok(DataValue::Money(m.abs())),
+            Some(DataValue::Int(i)) => Ok(DataValue::Int(i.abs())),
+            _ => Err(EvaluationError::InvalidArgument("value".to_string())),
+        }
+    }
+}
+
+/// min(a, b) — Returns the smaller of two values.
+pub struct Min;
+
+impl ScalarFunction for Min {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let a = match args.first() {
+            Some(DataValue::Money(m)) => *m,
+            Some(DataValue::Int(i)) => Decimal::from(*i),
+            _ => return Err(EvaluationError::InvalidArgument("a".to_string())),
+        };
+        let b = match args.get(1) {
+            Some(DataValue::Money(m)) => *m,
+            Some(DataValue::Int(i)) => Decimal::from(*i),
+            _ => return Err(EvaluationError::InvalidArgument("b".to_string())),
+        };
+        Ok(DataValue::Money(a.min(b)))
+    }
+}
+
+/// max(a, b) — Returns the larger of two values.
+pub struct Max;
+
+impl ScalarFunction for Max {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let a = match args.first() {
+            Some(DataValue::Money(m)) => *m,
+            Some(DataValue::Int(i)) => Decimal::from(*i),
+            _ => return Err(EvaluationError::InvalidArgument("a".to_string())),
+        };
+        let b = match args.get(1) {
+            Some(DataValue::Money(m)) => *m,
+            Some(DataValue::Int(i)) => Decimal::from(*i),
+            _ => return Err(EvaluationError::InvalidArgument("b".to_string())),
+        };
+        Ok(DataValue::Money(a.max(b)))
+    }
+}
