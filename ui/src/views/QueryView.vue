@@ -1,0 +1,85 @@
+<template>
+  <div>
+    <div class="page-header">
+      <h1>FQL Query Editor</h1>
+    </div>
+
+    <div class="card fql-editor">
+      <textarea
+        v-model="query"
+        placeholder="Enter FQL statements...&#10;&#10;Examples:&#10;  CREATE ACCOUNT @bank ASSET;&#10;  GET balance(@bank, 2023-12-31) AS result;&#10;  GET trial_balance(2023-12-31) AS tb;"
+        @keydown.ctrl.enter="executeQuery"
+      ></textarea>
+      <div class="toolbar">
+        <Button label="Execute" icon="pi pi-play" @click="executeQuery" :loading="loading" />
+        <Button label="Clear" icon="pi pi-trash" severity="secondary" @click="clearResults" />
+        <span style="color: #94a3b8; font-size: 0.85rem;">Ctrl+Enter to execute</span>
+      </div>
+    </div>
+
+    <div v-if="error" class="error-msg">{{ error }}</div>
+
+    <div v-if="results.length > 0" class="card">
+      <h3>Results ({{ metadata.statements_executed }} statements, {{ metadata.journals_created }} journals)</h3>
+      <div v-for="(result, i) in results" :key="i" style="margin-bottom: 1rem;">
+        <pre style="background: #f1f5f9; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem;">{{ result }}</pre>
+      </div>
+    </div>
+
+    <div v-if="history.length > 0" class="card">
+      <h3>Recent Queries</h3>
+      <div v-for="(item, i) in history" :key="i" style="margin-bottom: 0.5rem;">
+        <Button :label="item.slice(0, 80) + (item.length > 80 ? '...' : '')" severity="secondary" text size="small" @click="query = item" />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { executeFql } from '../api/client'
+import Button from 'primevue/button'
+
+const query = ref('')
+const results = ref<string[]>([])
+const error = ref<string | null>(null)
+const loading = ref(false)
+const metadata = ref({ statements_executed: 0, journals_created: 0 })
+const history = ref<string[]>([])
+
+onMounted(() => {
+  const saved = localStorage.getItem('findb-query-history')
+  if (saved) history.value = JSON.parse(saved)
+})
+
+async function executeQuery() {
+  if (!query.value.trim()) return
+  loading.value = true
+  error.value = null
+  results.value = []
+
+  try {
+    const resp = await executeFql(query.value)
+    metadata.value = resp.metadata
+    if (resp.success) {
+      results.value = resp.results
+    } else {
+      error.value = resp.error || 'Unknown error'
+    }
+
+    // Save to history
+    const q = query.value.trim()
+    history.value = [q, ...history.value.filter((h) => h !== q)].slice(0, 20)
+    localStorage.setItem('findb-query-history', JSON.stringify(history.value))
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
+}
+
+function clearResults() {
+  results.value = []
+  error.value = null
+}
+</script>
