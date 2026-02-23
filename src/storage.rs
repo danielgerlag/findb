@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, HashMap, HashSet}, sync::{Arc, RwLock}, ops::Bound};
+use std::{collections::{BTreeMap, HashMap, HashSet}, sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}}, ops::Bound};
 
 use rust_decimal::Decimal;
 use time::Date;
@@ -39,7 +39,7 @@ pub struct InMemoryStorage {
     ledger_accounts: RwLock<BTreeMap<Arc<str>, LedgerStore>>,
     rates: RwLock<BTreeMap<Arc<str>, RateStore>>,
     journals: RwLock<BTreeMap<u128, JournalEntry>>,
-    
+    sequence_counter: AtomicU64,
 }
 
 impl InMemoryStorage {
@@ -48,7 +48,12 @@ impl InMemoryStorage {
             ledger_accounts: RwLock::new(BTreeMap::new()),
             rates: RwLock::new(BTreeMap::new()),
             journals: RwLock::new(BTreeMap::new()),
+            sequence_counter: AtomicU64::new(1),
         }
+    }
+
+    fn next_sequence(&self) -> u64 {
+        self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
 }
 
@@ -82,12 +87,16 @@ impl StorageBackend for InMemoryStorage {
 
     fn create_journal(&self, command: &CreateJournalCommand) -> Result<(), StorageError> {
         let jid = Uuid::new_v4().as_u128();
+        let seq = self.next_sequence();
 
         let entry = JournalEntry {
+            id: jid,
+            sequence: seq,
             date: command.date,
             description: command.description.clone(),
             amount: command.amount,
             dimensions: command.dimensions.clone(),
+            created_at: time::OffsetDateTime::now_utc(),
         };
 
         self.journals.write().unwrap().insert(jid, entry);
