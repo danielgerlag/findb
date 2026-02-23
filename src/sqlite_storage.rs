@@ -527,10 +527,8 @@ impl StorageBackend for SqliteStorage {
             .unwrap();
 
         let mut result = Vec::new();
-        for row in rows {
-            if let Ok((id, at)) = row {
-                result.push((Arc::from(id.as_str()), str_to_account_type(&at)));
-            }
+        for (id, at) in rows.flatten() {
+            result.push((Arc::from(id.as_str()), str_to_account_type(&at)));
         }
         result
     }

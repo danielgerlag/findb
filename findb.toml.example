@@ -9,10 +9,12 @@ level = "info"
 json = false
 
 [storage]
-# Storage backend: "memory" (default) or "sqlite"
+# Storage backend: "memory" (default), "sqlite", or "postgres"
 backend = "memory"
 # Path to SQLite database file (only used when backend = "sqlite")
 # sqlite_path = "findb.db"
+# PostgreSQL connection string (only used when backend = "postgres")
+# postgres_url = "host=localhost user=findb password=findb dbname=findb"
 
 [auth]
 enabled = false

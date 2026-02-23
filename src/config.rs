@@ -36,13 +36,17 @@ pub struct Config {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct StorageConfig {
-    /// Storage backend: "memory" or "sqlite"
+    /// Storage backend: "memory", "sqlite", or "postgres"
     #[serde(default = "default_storage_backend")]
     pub backend: String,
 
     /// Path to SQLite database file (only used when backend = "sqlite")
     #[serde(default = "default_sqlite_path")]
     pub sqlite_path: String,
+
+    /// PostgreSQL connection string (only used when backend = "postgres")
+    #[serde(default = "default_postgres_url")]
+    pub postgres_url: String,
 }
 
 impl Default for StorageConfig {
@@ -50,6 +54,7 @@ impl Default for StorageConfig {
         Self {
             backend: default_storage_backend(),
             sqlite_path: default_sqlite_path(),
+            postgres_url: default_postgres_url(),
         }
     }
 }
@@ -60,6 +65,10 @@ fn default_storage_backend() -> String {
 
 fn default_sqlite_path() -> String {
     "findb.db".to_string()
+}
+
+fn default_postgres_url() -> String {
+    "host=localhost user=findb password=findb dbname=findb".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

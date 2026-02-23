@@ -19,7 +19,7 @@ FinanceDB is an accounting ledger at its core, so standardized financial concept
 - **Authentication** — API key-based auth with role support (admin/writer/reader)
 - **Observability** — Structured logging (tracing), Prometheus metrics (`/metrics`), health checks
 - **Configurable** — TOML config file, CLI args, environment variable support
-- **Pluggable storage** — In-memory (default) or SQLite for persistence
+- **Pluggable storage** — In-memory (default), SQLite, or PostgreSQL for persistence
 - **Multi-currency** — FX rate conversion functions (`convert`, `fx_rate`)
 - **Built-in functions** — `balance`, `statement`, `trial_balance`, `income_statement`, `convert`, `round`, `abs`, `min`, `max`
 
@@ -55,8 +55,9 @@ level = "info"
 json = false
 
 [storage]
-backend = "memory"        # "memory" or "sqlite"
+backend = "memory"        # "memory", "sqlite", or "postgres"
 # sqlite_path = "findb.db"  # path for sqlite backend
+# postgres_url = "host=localhost user=findb password=findb dbname=findb"
 
 [auth]
 enabled = false

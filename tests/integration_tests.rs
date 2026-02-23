@@ -654,3 +654,235 @@ fn test_sqlite_implicit_transaction_rollback() {
         _ => panic!("Expected Money, got {:?}", balance),
     }
 }
+
+// --- PostgreSQL backend tests ---
+
+fn pg_connection_string() -> String {
+    std::env::var("FINDB_TEST_POSTGRES_URL")
+        .unwrap_or_else(|_| "host=localhost user=findb password=findb dbname=findb".to_string())
+}
+
+fn setup_postgres() -> (StatementExecutor, ExecutionContext) {
+    use findb::postgres_storage::PostgresStorage;
+
+    // Drop all tables first to ensure a clean slate
+    let conn_str = pg_connection_string();
+    let mut client = postgres::Client::connect(&conn_str, postgres::NoTls)
+        .expect("Failed to connect to PostgreSQL for cleanup");
+    client
+        .batch_execute(
+            "DROP TABLE IF EXISTS ledger_entry_dimensions CASCADE;
+             DROP TABLE IF EXISTS ledger_entries CASCADE;
+             DROP TABLE IF EXISTS journal_dimensions CASCADE;
+             DROP TABLE IF EXISTS journals CASCADE;
+             DROP TABLE IF EXISTS rates CASCADE;
+             DROP TABLE IF EXISTS accounts CASCADE;
+             DROP TABLE IF EXISTS sequence_counter CASCADE;",
+        )
+        .expect("Failed to clean up PostgreSQL tables");
+    drop(client);
+
+    let storage: Arc<dyn findb::storage::StorageBackend> =
+        Arc::new(PostgresStorage::new(&conn_str).expect("Failed to create PostgresStorage"));
+    let function_registry = FunctionRegistry::new();
+    register_functions(&function_registry, &storage);
+    let expression_evaluator = Arc::new(ExpressionEvaluator::new(
+        Arc::new(function_registry),
+        storage.clone(),
+    ));
+    let exec = StatementExecutor::new(expression_evaluator, storage);
+    let eff_date = time::OffsetDateTime::now_utc().date();
+    let context = ExecutionContext::new(eff_date, QueryVariables::new());
+    (exec, context)
+}
+
+fn postgres_available() -> bool {
+    let conn_str = pg_connection_string();
+    postgres::Client::connect(&conn_str, postgres::NoTls).is_ok()
+}
+
+#[test]
+#[ignore] // requires running PostgreSQL; run with: cargo test -- --ignored
+fn test_postgres_lending_fund_e2e() {
+    if !postgres_available() {
+        eprintln!("Skipping PostgreSQL test: no connection available");
+        return;
+    }
+
+    let (exec, mut ctx) = setup_postgres();
+
+    let results = execute_script(
+        &exec,
+        &mut ctx,
+        "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @loans ASSET;
+        CREATE ACCOUNT @interest_earned INCOME;
+        CREATE ACCOUNT @equity EQUITY;
+
+        CREATE RATE prime;
+        SET RATE prime 0.05 2023-01-01;
+        SET RATE prime 0.06 2023-02-15;
+
+        CREATE JOURNAL
+            2023-01-01, 20000, 'Investment'
+        FOR Investor='Frank'
+        CREDIT @equity, DEBIT @bank;
+
+        CREATE JOURNAL
+            2023-02-01, 1000, 'Loan Issued'
+        FOR Customer='John', Region='US'
+        DEBIT @loans, CREDIT @bank;
+
+        CREATE JOURNAL
+            2023-02-01, 500, 'Loan Issued'
+        FOR Customer='Joe', Region='US'
+        DEBIT @loans, CREDIT @bank;
+
+        ACCRUE @loans FROM 2023-02-01 TO 2023-02-28
+        WITH RATE prime COMPOUND DAILY
+        BY Customer
+        INTO JOURNAL
+            2023-03-01, 'Interest'
+        DEBIT @loans,
+        CREDIT @interest_earned;
+
+        GET
+            balance(@loans, 2023-03-01) AS LoanBookTotal,
+            trial_balance(2023-03-01) AS TrialBalance
+    ",
+    );
+
+    let get_result = results.last().unwrap();
+
+    let loan_total = &get_result.variables["LoanBookTotal"];
+    match loan_total {
+        DataValue::Money(m) => {
+            assert!(
+                *m > rust_decimal::Decimal::from(1500),
+                "Loan book should include accrued interest"
+            );
+        }
+        _ => panic!("Expected Money for LoanBookTotal"),
+    }
+
+    match &get_result.variables["TrialBalance"] {
+        DataValue::TrialBalance(items) => {
+            let mut total_debit = rust_decimal::Decimal::ZERO;
+            let mut total_credit = rust_decimal::Decimal::ZERO;
+            for item in items {
+                match item.account_type {
+                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                        total_debit += item.balance;
+                    }
+                    _ => {
+                        total_credit += item.balance;
+                    }
+                }
+            }
+            assert_eq!(
+                total_debit, total_credit,
+                "PostgreSQL: Trial balance must be in balance after accrual"
+            );
+        }
+        _ => panic!("Expected TrialBalance"),
+    }
+}
+
+#[test]
+#[ignore]
+fn test_postgres_implicit_transaction_rollback() {
+    if !postgres_available() {
+        eprintln!("Skipping PostgreSQL test: no connection available");
+        return;
+    }
+
+    let (exec, mut ctx) = setup_postgres();
+
+    execute_script(
+        &exec,
+        &mut ctx,
+        "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+    ",
+    );
+
+    let statements = lexer::parse(
+        "
+        CREATE JOURNAL 2023-01-01, 1000, 'Investment' CREDIT @equity, DEBIT @bank;
+        CREATE JOURNAL 2023-02-01, 500, 'Bad' CREDIT @nonexistent, DEBIT @bank;
+    ",
+    )
+    .unwrap();
+
+    let result = exec.execute_script(&mut ctx, &statements);
+    assert!(result.is_err(), "Script should fail on missing account");
+
+    let results = execute_script(
+        &exec,
+        &mut ctx,
+        "
+        GET balance(@bank, 2023-12-31) AS result
+    ",
+    );
+    let balance = &results[0].variables["result"];
+    match balance {
+        DataValue::Money(m) => assert_eq!(
+            *m,
+            rust_decimal::Decimal::ZERO,
+            "PostgreSQL: Balance should be 0 after rollback"
+        ),
+        _ => panic!("Expected Money, got {:?}", balance),
+    }
+}
+
+#[test]
+#[ignore]
+fn test_postgres_multi_currency() {
+    if !postgres_available() {
+        eprintln!("Skipping PostgreSQL test: no connection available");
+        return;
+    }
+
+    let (exec, mut ctx) = setup_postgres();
+
+    let results = execute_script(
+        &exec,
+        &mut ctx,
+        "
+        CREATE ACCOUNT @bank_usd ASSET;
+        CREATE ACCOUNT @bank_eur ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+
+        CREATE RATE usd_eur;
+        SET RATE usd_eur 0.85 2023-01-01;
+        SET RATE usd_eur 0.92 2023-06-01;
+
+        CREATE JOURNAL 2023-01-01, 10000, 'Initial investment'
+        CREDIT @equity, DEBIT @bank_usd;
+
+        GET
+            convert(1000, 'usd_eur', 2023-07-01) AS euros,
+            fx_rate('usd_eur', 2023-07-01) AS rate,
+            balance(@bank_usd, 2023-12-31) AS usd_balance
+    ",
+    );
+
+    let get_result = results.last().unwrap();
+
+    match &get_result.variables["euros"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(920)),
+        v => panic!("Expected Money(920), got {:?}", v),
+    }
+    match &get_result.variables["rate"] {
+        DataValue::Money(m) => {
+            assert_eq!(*m, rust_decimal_macros::dec!(0.92));
+        }
+        v => panic!("Expected Money(0.92), got {:?}", v),
+    }
+    match &get_result.variables["usd_balance"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(10000)),
+        v => panic!("Expected Money(10000), got {:?}", v),
+    }
+}

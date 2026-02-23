@@ -5,7 +5,7 @@ use clap::Parser;
 use findb::auth::auth_middleware;
 use findb::config::{CliArgs, Config};
 use findb::functions::{Statement, TrialBalance};
-use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, sqlite_storage::SqliteStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max}, lexer};
+use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, sqlite_storage::SqliteStorage, postgres_storage::PostgresStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max}, lexer};
 use metrics::{counter, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Serialize, Deserialize};
@@ -53,6 +53,11 @@ async fn main() {
             tracing::info!(path = %config.storage.sqlite_path, "Using SQLite storage backend");
             Arc::new(SqliteStorage::new(&config.storage.sqlite_path)
                 .expect("Failed to initialize SQLite storage"))
+        }
+        "postgres" => {
+            tracing::info!(url = %config.storage.postgres_url, "Using PostgreSQL storage backend");
+            Arc::new(PostgresStorage::new(&config.storage.postgres_url)
+                .expect("Failed to initialize PostgreSQL storage"))
         }
         _ => {
             tracing::info!("Using in-memory storage backend");
