@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod auth;
 pub mod config;
+pub mod grpc;
 pub mod lexer;
 pub mod evaluator;
 pub mod statement_executor;

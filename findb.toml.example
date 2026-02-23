@@ -30,3 +30,7 @@ enabled = false
 # name = "reader-service"
 # key = "another-key"
 # role = "reader"
+
+[grpc]
+enabled = false
+# port = 50051

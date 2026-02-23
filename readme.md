@@ -16,6 +16,7 @@ FinanceDB is an accounting ledger at its core, so standardized financial concept
 - **ACID transactions** — `BEGIN` / `COMMIT` / `ROLLBACK` with implicit transaction wrapping
 - **Immutable ledger** — Append-only journal entries with sequence numbers and timestamps
 - **REST API** — Full REST API alongside FQL-over-HTTP
+- **gRPC API** — Protocol Buffers service on a configurable port (tonic)
 - **Authentication** — API key-based auth with role support (admin/writer/reader)
 - **Observability** — Structured logging (tracing), Prometheus metrics (`/metrics`), health checks
 - **Configurable** — TOML config file, CLI args, environment variable support
@@ -65,6 +66,10 @@ enabled = false
 # name = "my-service"
 # key = "secret-key"
 # role = "admin"
+
+[grpc]
+enabled = false
+# port = 50051
 ```
 
 CLI flags override config values:
@@ -117,6 +122,25 @@ Response:
 | `GET` | `/health` | Liveness check |
 | `GET` | `/ready` | Readiness check |
 | `GET` | `/metrics` | Prometheus metrics |
+
+### gRPC API
+
+Enable with `[grpc] enabled = true` in `findb.toml`. Default port: `50051`.
+
+The proto definition is at `proto/findb.proto`. Available RPCs:
+
+| RPC | Description |
+|-----|-------------|
+| `ExecuteFql` | Execute raw FQL queries |
+| `CreateAccount` | Create a ledger account |
+| `ListAccounts` | List all accounts |
+| `GetBalance` | Query account balance at a date |
+| `GetStatement` | Get account statement for a period |
+| `GetTrialBalance` | Get trial balance at a date |
+| `CreateRate` | Create an FX/interest rate |
+| `SetRate` | Set rate value at a date |
+| `CreateJournal` | Create a journal entry |
+| `Health` | Health check |
 
 ### Authentication
 

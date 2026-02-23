@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{Router, routing::{post, get}, extract::{State, Path, Query}, response::IntoResponse, http::StatusCode, Json, middleware, Extension};
 use clap::Parser;
+use findb::grpc::{pb::finance_db_server::FinanceDbServer, FinanceDbService};
 use findb::auth::auth_middleware;
 use findb::config::{CliArgs, Config};
 use findb::functions::{Statement, TrialBalance};
@@ -99,9 +100,9 @@ async fn main() {
         .route("/api/journals", post(rest_create_journal))
         .route("/api/trial-balance", get(rest_trial_balance))
         .route("/", post(fql_handler))
-        .with_state(state)
-        .layer(Extension(auth_config))
-        .layer(middleware::from_fn(auth_middleware));
+        .with_state(state.clone())
+        .layer(middleware::from_fn(auth_middleware))
+        .layer(Extension(auth_config));
 
     // Public routes (no auth)
     let public = Router::new()
@@ -115,12 +116,41 @@ async fn main() {
     let app = public.merge(protected);
 
     let addr = config.listen_addr();
-    tracing::info!("FinanceDB listening on {}", addr);
+    tracing::info!("FinanceDB HTTP listening on {}", addr);
 
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+    if config.grpc.enabled {
+        let grpc_addr = format!("{}:{}", config.server.host, config.grpc.port)
+            .parse()
+            .expect("Invalid gRPC listen address");
+        let grpc_service = FinanceDbService::new(state.clone());
+        tracing::info!("FinanceDB gRPC listening on {}", grpc_addr);
+
+        let grpc_server = tonic::transport::Server::builder()
+            .add_service(FinanceDbServer::new(grpc_service))
+            .serve(grpc_addr);
+
+        let http_server = axum::Server::bind(&addr)
+            .serve(app.into_make_service());
+
+        // Run both servers concurrently
+        tokio::select! {
+            result = http_server => {
+                if let Err(e) = result {
+                    tracing::error!("HTTP server error: {}", e);
+                }
+            }
+            result = grpc_server => {
+                if let Err(e) = result {
+                    tracing::error!("gRPC server error: {}", e);
+                }
+            }
+        }
+    } else {
+        axum::Server::bind(&addr)
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    }
 }
 
 async fn health_handler() -> Json<HealthResponse> {

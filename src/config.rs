@@ -32,6 +32,9 @@ pub struct Config {
 
     #[serde(default)]
     pub storage: StorageConfig,
+
+    #[serde(default)]
+    pub grpc: GrpcConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -69,6 +72,30 @@ fn default_sqlite_path() -> String {
 
 fn default_postgres_url() -> String {
     "host=localhost user=findb password=findb dbname=findb".to_string()
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GrpcConfig {
+    /// Enable the gRPC server
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// gRPC server port
+    #[serde(default = "default_grpc_port")]
+    pub port: u16,
+}
+
+impl Default for GrpcConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_grpc_port(),
+        }
+    }
+}
+
+fn default_grpc_port() -> u16 {
+    50051
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -145,6 +172,7 @@ impl Default for Config {
             logging: default_logging(),
             auth: AuthConfig::default(),
             storage: StorageConfig::default(),
+            grpc: GrpcConfig::default(),
         }
     }
 }

@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+package findb.v1;
+
+// FinanceDB gRPC service
+service FinanceDb {
+  // Execute raw FQL statements
+  rpc ExecuteFql(ExecuteFqlRequest) returns (ExecuteFqlResponse);
+
+  // Account operations
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+
+  // Balance and statement queries
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc GetStatement(GetStatementRequest) returns (GetStatementResponse);
+  rpc GetTrialBalance(GetTrialBalanceRequest) returns (GetTrialBalanceResponse);
+
+  // Rate operations
+  rpc CreateRate(CreateRateRequest) returns (CreateRateResponse);
+  rpc SetRate(SetRateRequest) returns (SetRateResponse);
+
+  // Journal operations
+  rpc CreateJournal(CreateJournalRequest) returns (CreateJournalResponse);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// --- FQL ---
+
+message ExecuteFqlRequest {
+  string query = 1;
+}
+
+message ExecuteFqlResponse {
+  bool success = 1;
+  repeated string results = 2;
+  string error = 3;
+  int32 statements_executed = 4;
+  int32 journals_created = 5;
+}
+
+// --- Accounts ---
+
+message CreateAccountRequest {
+  string id = 1;
+  string account_type = 2; // ASSET, LIABILITY, EQUITY, INCOME, EXPENSE
+}
+
+message CreateAccountResponse {
+  bool success = 1;
+}
+
+message ListAccountsRequest {}
+
+message ListAccountsResponse {
+  repeated AccountInfo accounts = 1;
+}
+
+message AccountInfo {
+  string id = 1;
+  string account_type = 2;
+}
+
+// --- Balance ---
+
+message GetBalanceRequest {
+  string account_id = 1;
+  string date = 2;               // YYYY-MM-DD
+  optional string dimension_key = 3;
+  optional string dimension_value = 4;
+}
+
+message GetBalanceResponse {
+  string balance = 1; // decimal as string for precision
+}
+
+// --- Statement ---
+
+message GetStatementRequest {
+  string account_id = 1;
+  string from_date = 2;
+  string to_date = 3;
+  optional string dimension_key = 4;
+  optional string dimension_value = 5;
+}
+
+message GetStatementResponse {
+  repeated StatementTransaction transactions = 1;
+}
+
+message StatementTransaction {
+  string date = 1;
+  string description = 2;
+  string amount = 3;
+  string balance = 4;
+}
+
+// --- Trial Balance ---
+
+message GetTrialBalanceRequest {
+  string date = 1;
+}
+
+message GetTrialBalanceResponse {
+  repeated TrialBalanceItem items = 1;
+}
+
+message TrialBalanceItem {
+  string account_id = 1;
+  string account_type = 2;
+  string balance = 3;
+}
+
+// --- Rates ---
+
+message CreateRateRequest {
+  string id = 1;
+}
+
+message CreateRateResponse {
+  bool success = 1;
+}
+
+message SetRateRequest {
+  string rate_id = 1;
+  string value = 2;
+  string date = 3;
+}
+
+message SetRateResponse {
+  bool success = 1;
+}
+
+// --- Journals ---
+
+message CreateJournalRequest {
+  string date = 1;
+  string amount = 2;
+  string description = 3;
+  map<string, string> dimensions = 4;
+  repeated JournalOperation operations = 5;
+}
+
+message JournalOperation {
+  string op_type = 1;  // CREDIT or DEBIT
+  string account = 2;
+  optional string amount = 3; // if omitted, uses journal amount
+}
+
+message CreateJournalResponse {
+  bool success = 1;
+}
+
+// --- Health ---
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+}
