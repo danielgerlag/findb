@@ -20,7 +20,7 @@ impl Balance {
 
 
 impl ScalarFunction for Balance {
-    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
         let account_id = match args.get(0) {
             Some(DataValue::AccountId(id)) => id,
             _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
@@ -58,7 +58,7 @@ impl Statement {
 
 
 impl ScalarFunction for Statement {
-    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
         let account_id = match args.get(0) {
             Some(DataValue::AccountId(id)) => id,
             _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
@@ -99,7 +99,7 @@ impl TrialBalance {
 }
 
 impl ScalarFunction for TrialBalance {
-    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+    fn call(&self, _context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
         let effective_date = match args.get(0) {
             Some(DataValue::Date(dt)) => dt,
             _ => return Err(EvaluationError::InvalidArgument("date".to_string())),

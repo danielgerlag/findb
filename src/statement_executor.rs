@@ -1,9 +1,8 @@
 use std::{sync::Arc, collections::{BTreeMap, HashMap}, fmt::Display};
 
-use serde::__private::de;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, LedgerOperationData, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
@@ -162,7 +161,7 @@ impl StatementExecutor {
         Ok(entries)
     }
 
-    fn create_account(&self, context: &ExecutionContext, account: &AccountExpression) -> Result<ExecutionResult, EvaluationError> {
+    fn create_account(&self, _context: &ExecutionContext, account: &AccountExpression) -> Result<ExecutionResult, EvaluationError> {
         //let mut eval_ctx : ExpressionEvaluationContext = context.into();
 
         self.storage.create_account(account)?;
@@ -172,7 +171,7 @@ impl StatementExecutor {
         Ok(ExecutionResult::new())
     }
 
-    fn create_rate(&self, context: &ExecutionContext, rate: &CreateRateExpression) -> Result<ExecutionResult, EvaluationError> {
+    fn create_rate(&self, _context: &ExecutionContext, rate: &CreateRateExpression) -> Result<ExecutionResult, EvaluationError> {
         let cmd = CreateRateCommand {
             id: rate.id.clone(),
         };

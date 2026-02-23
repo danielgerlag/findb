@@ -349,7 +349,19 @@ impl ExpressionEvaluator {
             ast::BinaryExpression::Exponent(e1, e2) => {
                 let n1 = self.evaluate_expression(context, e1)?;
                 let n2 = self.evaluate_expression(context, e2)?;
-                todo!()
+                match (n1, n2) {
+                    (DataValue::Int(n1), DataValue::Int(n2)) => {
+                        if n2 >= 0 {
+                            DataValue::Int(n1.pow(n2 as u32))
+                        } else {
+                            DataValue::Money(OrderedFloat::from((n1 as f64).powi(n2 as i32)))
+                        }
+                    },
+                    (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1.0.powf(n2.0))),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(OrderedFloat::from(n1.0.powi(n2 as i32))),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from((n1 as f64).powf(n2.0))),
+                    _ => DataValue::Null,
+                }
             },
         };
         Ok(result)
@@ -360,8 +372,12 @@ impl ExpressionEvaluator {
             ast::VariadicExpression::FunctionExpression(func) => {
                 self.evaluate_function_expression(context, func)
             },
-            ast::VariadicExpression::CaseExpression(_) => todo!(),
-            ast::VariadicExpression::ListExpression(_) => todo!(),
+            ast::VariadicExpression::CaseExpression(case) => {
+                self.evaluate_case_expression(context, case)
+            },
+            ast::VariadicExpression::ListExpression(list) => {
+                self.evaluate_list_expression(context, list)
+            },
         }
     }
 

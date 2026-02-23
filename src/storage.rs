@@ -1,10 +1,10 @@
-use std::{collections::{BTreeMap, HashMap, HashSet}, sync::{Arc, RwLock}, ops::Bound, hash::Hash};
+use std::{collections::{BTreeMap, HashMap, HashSet}, sync::{Arc, RwLock}, ops::Bound};
 
 use ordered_float::OrderedFloat;
 use time::Date;
 use uuid::Uuid;
 
-use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue, read::JournalEntry, StatementTxn}, evaluator::EvaluationError, ast::{AccountExpression, AccountType}};
+use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue, read::JournalEntry, StatementTxn}, ast::{AccountExpression, AccountType}};
 
 
 #[derive(Debug)]
@@ -165,7 +165,7 @@ impl LedgerStore {
         day.add_entry(journal_id, amount, dimensions);
 
         let future_days = self.days.range_mut((Bound::Excluded(date), Bound::Unbounded));
-        for (fd, fe) in future_days {
+        for (_fd, fe) in future_days {
             fe.increment_balance(dimensions, amount);
         }
         

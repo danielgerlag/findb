@@ -1,7 +1,5 @@
 #![allow(clippy::redundant_closure_call)]
 
-use std::time::UNIX_EPOCH;
-
 use super::ast::*;
 use peg::{error::ParseError, str::LineCol};
 use time::{Date, Month};
