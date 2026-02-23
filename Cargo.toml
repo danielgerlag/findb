@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 axum = "0.6.20"
 clap = { version = "4.3", features = ["derive"] }
+metrics = "0.21"
+metrics-exporter-prometheus = "0.12"
 peg = "0.8.1"
 prettytable-rs = "0.10.0"
 rust_decimal = { version = "1.31", features = ["maths"] }

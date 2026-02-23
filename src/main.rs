@@ -5,6 +5,8 @@ use clap::Parser;
 use findb::config::{CliArgs, Config};
 use findb::functions::{Statement, TrialBalance};
 use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::InMemoryStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::Balance, lexer};
+use metrics::{counter, histogram};
+use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Serialize, Deserialize};
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -46,6 +48,12 @@ async fn main() {
     }
 
     let storage = Arc::new(InMemoryStorage::new());
+
+    // Install Prometheus metrics recorder
+    let prom_handle = PrometheusBuilder::new()
+        .install_recorder()
+        .expect("failed to install Prometheus recorder");
+
     let function_registry = FunctionRegistry::new();
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
@@ -58,6 +66,10 @@ async fn main() {
         .route("/fql", post(fql_handler))
         .route("/health", get(health_handler))
         .route("/ready", get(health_handler))
+        .route("/metrics", get({
+            let handle = prom_handle;
+            move || std::future::ready(handle.render())
+        }))
         // REST API
         .route("/api/accounts", post(rest_create_account).get(rest_list_accounts))
         .route("/api/accounts/:id/balance", get(rest_get_balance))
@@ -90,12 +102,14 @@ async fn fql_handler(
     State(exec): State<Arc<StatementExecutor>>,
     query: String
 ) -> impl IntoResponse {
+    counter!("fql_requests_total", 1);
     let start = std::time::Instant::now();
     
     let statements = match lexer::parse(&query) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!("FQL parse error: {}", e);
+            counter!("fql_errors_total", 1, "type" => "parse");
             let resp = FqlResponse {
                 success: false,
                 results: vec![],
@@ -122,6 +136,10 @@ async fn fql_handler(
             }
 
             let duration = start.elapsed();
+            histogram!("fql_request_duration_seconds", duration.as_secs_f64());
+            counter!("fql_statements_total", script_results.len() as u64);
+            counter!("fql_journals_created_total", total_journals as u64);
+
             tracing::debug!(
                 statements = script_results.len(),
                 journals = total_journals,
@@ -139,6 +157,10 @@ async fn fql_handler(
         }
         Err(e) => {
             tracing::error!("FQL execution error: {}", e);
+            counter!("fql_errors_total", 1, "type" => "execution");
+            let duration = start.elapsed();
+            histogram!("fql_request_duration_seconds", duration.as_secs_f64());
+
             let resp = FqlResponse {
                 success: false,
                 results: vec![],
