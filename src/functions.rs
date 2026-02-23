@@ -1,15 +1,15 @@
 use std::{sync::Arc, ops::Bound};
 
-use crate::{function_registry::ScalarFunction, models::{DataValue, TrialBalanceItem}, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::Storage};
+use crate::{function_registry::ScalarFunction, models::{DataValue, TrialBalanceItem}, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::StorageBackend};
 
 
 
 pub struct Balance {
-    storage: Arc<Storage>,
+    storage: Arc<dyn StorageBackend>,
 }
 
 impl Balance {
-    pub fn new(storage: Arc<Storage>) -> Self {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self {
             storage,
         }
@@ -43,11 +43,11 @@ impl ScalarFunction for Balance {
 
 
 pub struct Statement {
-    storage: Arc<Storage>,
+    storage: Arc<dyn StorageBackend>,
 }
 
 impl Statement {
-    pub fn new(storage: Arc<Storage>) -> Self {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self {
             storage,
         }
@@ -85,11 +85,11 @@ impl ScalarFunction for Statement {
 }
 
 pub struct TrialBalance {
-    storage: Arc<Storage>,
+    storage: Arc<dyn StorageBackend>,
 }
 
 impl TrialBalance {
-    pub fn new(storage: Arc<Storage>) -> Self {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self {
             storage,
         }

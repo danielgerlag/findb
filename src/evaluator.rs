@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc, str::FromStr};
 use rust_decimal::{Decimal, MathematicalOps};
 use time::Date;
 
-use crate::{ast, models::DataValue, storage::{StorageError, Storage}, function_registry::{FunctionRegistry, Function}};
+use crate::{ast, models::DataValue, storage::{StorageError, StorageBackend}, function_registry::{FunctionRegistry, Function}};
 
 use thiserror::Error;
 
@@ -83,12 +83,12 @@ impl ExpressionEvaluationContext {
 
 pub struct ExpressionEvaluator {
     function_registry: Arc<FunctionRegistry>,
-    storage: Arc<Storage>,
+    storage: Arc<dyn StorageBackend>,
 }
 
 impl ExpressionEvaluator {
 
-    pub fn new(function_registry: Arc<FunctionRegistry>, storage: Arc<Storage>) -> ExpressionEvaluator {
+    pub fn new(function_registry: Arc<FunctionRegistry>, storage: Arc<dyn StorageBackend>) -> ExpressionEvaluator {
         ExpressionEvaluator {  
             function_registry,
             storage,

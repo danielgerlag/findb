@@ -6,10 +6,10 @@ use findb::functions::{Balance, Statement, TrialBalance};
 use findb::lexer;
 use findb::models::DataValue;
 use findb::statement_executor::{ExecutionContext, StatementExecutor};
-use findb::storage::Storage;
+use findb::storage::InMemoryStorage;
 
 fn setup() -> (StatementExecutor, ExecutionContext) {
-    let storage = Arc::new(Storage::new());
+    let storage = Arc::new(InMemoryStorage::new());
     let function_registry = FunctionRegistry::new();
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));

@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::StorageBackend, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
@@ -55,11 +55,11 @@ impl Into<ExpressionEvaluationContext> for &ExecutionContext {
 
 pub struct StatementExecutor {
     expression_evaluator: Arc<ExpressionEvaluator>,
-    storage: Arc<Storage>,
+    storage: Arc<dyn StorageBackend>,
 }
 
 impl StatementExecutor {
-    pub fn new(expression_evaluator: Arc<ExpressionEvaluator>, storage: Arc<Storage>) -> Self {
+    pub fn new(expression_evaluator: Arc<ExpressionEvaluator>, storage: Arc<dyn StorageBackend>) -> Self {
         Self {
             expression_evaluator,
             storage,

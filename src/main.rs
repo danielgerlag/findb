@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use axum::{Router, routing::post, extract::State, response::IntoResponse};
 use findb::functions::{Statement, TrialBalance};
-use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::Storage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::Balance, lexer};
+use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::InMemoryStorage, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::Balance, lexer};
 
 #[tokio::main]
 async fn main() {
 
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
 
-    let storage = Arc::new(Storage::new());
+    let storage = Arc::new(InMemoryStorage::new());
     let function_registry = FunctionRegistry::new();
     function_registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     function_registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));

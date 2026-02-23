@@ -23,14 +23,26 @@ pub enum StorageError {
     RateNotFound(String),
 }
 
-pub struct Storage {
+pub trait StorageBackend: Send + Sync {
+    fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError>;
+    fn create_rate(&self, rate: &CreateRateCommand) -> Result<(), StorageError>;
+    fn set_rate(&self, command: &SetRateCommand) -> Result<(), StorageError>;
+    fn get_rate(&self, id: &str, date: Date) -> Result<Decimal, StorageError>;
+    fn create_journal(&self, command: &CreateJournalCommand) -> Result<(), StorageError>;
+    fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError>;
+    fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError>;
+    fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError>;
+    fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)>;
+}
+
+pub struct InMemoryStorage {
     ledger_accounts: RwLock<BTreeMap<Arc<str>, LedgerStore>>,
     rates: RwLock<BTreeMap<Arc<str>, RateStore>>,
     journals: RwLock<BTreeMap<u128, JournalEntry>>,
     
 }
 
-impl Storage {
+impl InMemoryStorage {
     pub fn new() -> Self {
         Self {
             ledger_accounts: RwLock::new(BTreeMap::new()),
@@ -38,20 +50,22 @@ impl Storage {
             journals: RwLock::new(BTreeMap::new()),
         }
     }
+}
 
-    pub fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError> {
+impl StorageBackend for InMemoryStorage {
+    fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError> {
         let mut ledger_accounts = self.ledger_accounts.write().unwrap();
         ledger_accounts.insert(account.id.clone(), LedgerStore::new(account.account_type.clone()));
         Ok(())
     }
 
-    pub fn create_rate(&self, rate: &CreateRateCommand) -> Result<(), StorageError> {
+    fn create_rate(&self, rate: &CreateRateCommand) -> Result<(), StorageError> {
         let mut rates = self.rates.write().unwrap();
         rates.insert(rate.id.clone(), RateStore::new());
         Ok(())
     }
 
-    pub fn set_rate(&self, command: &SetRateCommand) -> Result<(), StorageError> {
+    fn set_rate(&self, command: &SetRateCommand) -> Result<(), StorageError> {
         let mut rates = self.rates.write().unwrap();
         let rate_store = rates.get_mut(&command.id)
             .ok_or_else(|| StorageError::RateNotFound(command.id.to_string()))?;
@@ -59,14 +73,14 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_rate(&self, id: &str, date: Date) -> Result<Decimal, StorageError> {
+    fn get_rate(&self, id: &str, date: Date) -> Result<Decimal, StorageError> {
         let rates = self.rates.read().unwrap();
         let rate_store = rates.get(id)
             .ok_or_else(|| StorageError::RateNotFound(id.to_string()))?;
         rate_store.get_rate(date)
     }
 
-    pub fn create_journal(&self, command: &CreateJournalCommand) -> Result<(), StorageError> {
+    fn create_journal(&self, command: &CreateJournalCommand) -> Result<(), StorageError> {
         let jid = Uuid::new_v4().as_u128();
 
         let entry = JournalEntry {
@@ -99,14 +113,14 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
+    fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         let acct = ledger_accounts.get(account_id)
             .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
         Ok(acct.get_balance(date, dimension))
     }
 
-    pub fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError> {
+    fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         let acct = ledger_accounts.get(account_id)
             .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
@@ -134,7 +148,7 @@ impl Storage {
         Ok(DataValue::Statement(result))
     }
 
-    pub fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError> {
+    fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         let acct = ledger_accounts.get(account_id)
             .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
@@ -143,7 +157,7 @@ impl Storage {
         Ok(entries)
     }
 
-    pub fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)> {
+    fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         let mut result = Vec::new();
         for (k, v) in ledger_accounts.iter() {
