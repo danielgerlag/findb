@@ -246,7 +246,7 @@ impl StatementExecutor {
 
         eval_ctx.set_effective_date(effective_date);
 
-        let dimension_values = self.storage.get_dimension_values(&accrue.account_id, accrue.by_dimension.clone(), start_date, end_date);
+        let dimension_values = self.storage.get_dimension_values(&accrue.account_id, accrue.by_dimension.clone(), start_date, end_date)?;
         let mut amounts = HashMap::new();
         
         let mut dt = start_date;
@@ -256,7 +256,7 @@ impl StatementExecutor {
             
             for dimension_value in &dimension_values {
                 let dim = (accrue.by_dimension.clone() ,dimension_value.clone());
-                let open = self.storage.get_balance(&accrue.account_id, dt, Some(&dim));
+                let open = self.storage.get_balance(&accrue.account_id, dt, Some(&dim))?;
                 
                 let accural = match amounts.get(dimension_value) {
                     Some(pv) => *pv,

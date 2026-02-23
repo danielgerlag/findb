@@ -37,7 +37,7 @@ impl ScalarFunction for Balance {
             _ => return Err(EvaluationError::InvalidArgument("dimension".to_string())),
         };
 
-        let result = self.storage.get_balance(&account_id, *effective_date, dimension);
+        let result = self.storage.get_balance(&account_id, *effective_date, dimension)?;
 
         Ok(DataValue::Money(OrderedFloat::from(result)))
     }
@@ -80,7 +80,7 @@ impl ScalarFunction for Statement {
             _ => return Err(EvaluationError::InvalidArgument("dimension".to_string())),
         };
 
-        let result = self.storage.get_statement(&account_id, Bound::Included(*from), Bound::Included(*to), dimension);
+        let result = self.storage.get_statement(&account_id, Bound::Included(*from), Bound::Included(*to), dimension)?;
 
         Ok(result)
     }
@@ -108,7 +108,7 @@ impl ScalarFunction for TrialBalance {
         let accounts = self.storage.list_accounts();
         let mut result = Vec::new();
         for (account_id, account_type) in accounts {
-            let balance = self.storage.get_balance(&account_id, *effective_date, None);
+            let balance = self.storage.get_balance(&account_id, *effective_date, None)?;
             result.push(TrialBalanceItem {
                 account_id,
                 account_type,

@@ -7,11 +7,20 @@ use uuid::Uuid;
 use crate::{models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue, read::JournalEntry, StatementTxn}, ast::{AccountExpression, AccountType}};
 
 
-#[derive(Debug)]
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 pub enum StorageError {
-    IOError(std::io::Error),
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("{0}")]
     Other(String),
-    NoRateFound
+    #[error("no rate found for the given date")]
+    NoRateFound,
+    #[error("account not found: {0}")]
+    AccountNotFound(String),
+    #[error("rate not found: {0}")]
+    RateNotFound(String),
 }
 
 pub struct Storage {
@@ -44,14 +53,16 @@ impl Storage {
 
     pub fn set_rate(&self, command: &SetRateCommand) -> Result<(), StorageError> {
         let mut rates = self.rates.write().unwrap();
-        let rate_store = rates.get_mut(&command.id).unwrap();
+        let rate_store = rates.get_mut(&command.id)
+            .ok_or_else(|| StorageError::RateNotFound(command.id.to_string()))?;
         rate_store.add_rate(command.date, command.rate);
         Ok(())
     }
 
     pub fn get_rate(&self, id: &str, date: Date) -> Result<f64, StorageError> {
         let rates = self.rates.read().unwrap();
-        let rate_store = rates.get(id).unwrap();
+        let rate_store = rates.get(id)
+            .ok_or_else(|| StorageError::RateNotFound(id.to_string()))?;
         rate_store.get_rate(date)
     }
 
@@ -72,11 +83,13 @@ impl Storage {
         for ledger_entry in &command.ledger_entries {
             match ledger_entry {
                 LedgerEntryCommand::Debit {account_id, amount} => {
-                    let ledger_account = ledger_accounts.get_mut(account_id).unwrap();
+                    let ledger_account = ledger_accounts.get_mut(account_id)
+                        .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
                     ledger_account.add_entry(command.date, jid, *amount, &command.dimensions);
                 },
                 LedgerEntryCommand::Credit {account_id, amount} => {
-                    let ledger_account = ledger_accounts.get_mut(account_id).unwrap();
+                    let ledger_account = ledger_accounts.get_mut(account_id)
+                        .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
                     ledger_account.add_entry(command.date, jid, -*amount, &command.dimensions);
                 },
             }
@@ -86,14 +99,17 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> f64 {
+    pub fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<f64, StorageError> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
-        ledger_accounts.get(account_id).unwrap().get_balance(date, dimension)
+        let acct = ledger_accounts.get(account_id)
+            .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
+        Ok(acct.get_balance(date, dimension))
     }
 
-    pub fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> DataValue {
+    pub fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
-        let acct = ledger_accounts.get(account_id).unwrap(); //.get_balance(date, dimension)
+        let acct = ledger_accounts.get(account_id)
+            .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
         let entries = acct.get_statement(from, to, dimension);
         drop(ledger_accounts);
         let mut result = Vec::new();
@@ -115,15 +131,16 @@ impl Storage {
             }
         }
 
-        DataValue::Statement(result)
+        Ok(DataValue::Statement(result))
     }
 
-    pub fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> HashSet<Arc<DataValue>> {
+    pub fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
-        let acct = ledger_accounts.get(account_id).unwrap();
+        let acct = ledger_accounts.get(account_id)
+            .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
         let entries = acct.get_dimension_values(dimension_key, from, to);
         drop(ledger_accounts);
-        entries
+        Ok(entries)
     }
 
     pub fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)> {

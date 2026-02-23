@@ -5,26 +5,26 @@ use time::Date;
 
 use crate::{ast, models::DataValue, storage::{StorageError, Storage}, function_registry::{FunctionRegistry, Function}};
 
+use thiserror::Error;
 
-
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum EvaluationError {
+    #[error("division by zero")]
     DivideByZero,
+    #[error("invalid type")]
     InvalidType,
+    #[error("unknown identifier: {0}")]
     UnknownIdentifier(String),
+    #[error("unknown function: {0}")]
     UnknownFunction(String),
+    #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    #[error("invalid argument count: {0}")]
     InvalidArgumentCount(String),
-    StorageError(StorageError),
+    #[error("storage error: {0}")]
+    StorageError(#[from] StorageError),
+    #[error("no rate found for the given date")]
     NoRateFound,
-}
-
-
-
-impl From<StorageError> for EvaluationError {
-    fn from(val: StorageError) -> Self {
-        EvaluationError::StorageError(val)
-    }
 }
 
 pub type QueryVariables = BTreeMap<Arc<str>, DataValue>;
