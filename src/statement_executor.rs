@@ -117,7 +117,7 @@ impl StatementExecutor {
         };
 
         self.storage.create_journal(&command)?;
-        log::debug!("Created journal: {:?}", command);
+        tracing::debug!("Created journal: {:?}", command);
 
         let mut result = ExecutionResult::new();        
         result.journals_created += 1;
@@ -168,7 +168,7 @@ impl StatementExecutor {
 
         self.storage.create_account(account)?;
 
-        log::debug!("Created account: {:?}", account);
+        tracing::debug!("Created account: {:?}", account);
 
         Ok(ExecutionResult::new())
     }
@@ -178,7 +178,7 @@ impl StatementExecutor {
             id: rate.id.clone(),
         };
         self.storage.create_rate(&cmd)?;
-        log::debug!("Created rate: {:?}", rate);
+        tracing::debug!("Created rate: {:?}", rate);
 
         Ok(ExecutionResult::new())
     }
@@ -204,7 +204,7 @@ impl StatementExecutor {
             },
         };
         self.storage.set_rate(&cmd)?;
-        log::debug!("Set rate: {:?}", rate);
+        tracing::debug!("Set rate: {:?}", rate);
 
         Ok(ExecutionResult::new())
     }

@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod config;
 pub mod lexer;
 pub mod evaluator;
 pub mod statement_executor;
