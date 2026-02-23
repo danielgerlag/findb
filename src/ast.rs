@@ -9,6 +9,9 @@ pub enum Statement{
     Get(GetExpression),
     Set(SetCommand),
     Accrue(AccrueCommand),
+    Begin,
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, Clone, PartialEq)]

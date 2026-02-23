@@ -61,6 +61,9 @@ peg::parser! {
         rule kw_with()      = ("WITH" / "with")
         rule kw_in()        = ("IN" / "in")
         rule kw_exists()    = ("EXISTS" / "exists")
+        rule kw_begin()     = ("BEGIN" / "begin")
+        rule kw_commit()    = ("COMMIT" / "commit")
+        rule kw_rollback()  = ("ROLLBACK" / "rollback")
 
         rule _()
             = [' ']
@@ -273,6 +276,9 @@ peg::parser! {
             / kw_get() __+ e:projection_expression() ** (__* "," __*) { Statement::Get(GetExpression::get(e)) }
             / s:set_command() { Statement::Set(s) }
             / a:accrue_command() { Statement::Accrue(a) }
+            / kw_begin() { Statement::Begin }
+            / kw_commit() { Statement::Commit }
+            / kw_rollback() { Statement::Rollback }
 
         pub rule statements() -> Vec<Statement>
             = __* s:statement() ** (__* ";" __*) __* ";"? __* { s }

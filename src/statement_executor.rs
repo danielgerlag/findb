@@ -4,12 +4,13 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::StorageBackend, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::{StorageBackend, TransactionId}, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
     pub effective_date: Date,
     pub variables: QueryVariables,
+    pub transaction_id: Option<TransactionId>,
 }
 
 impl ExecutionContext {
@@ -17,6 +18,7 @@ impl ExecutionContext {
         Self {
             effective_date,
             variables,
+            transaction_id: None,
         }
     }
 }
@@ -80,7 +82,56 @@ impl StatementExecutor {
             Statement::Set(s) => match s {
                 SetCommand::Rate(r) => self.set_rate(context, r)?,
             },
+            Statement::Begin => {
+                let tx_id = self.storage.begin_transaction()?;
+                context.transaction_id = Some(tx_id);
+                ExecutionResult::new()
+            },
+            Statement::Commit => {
+                if let Some(tx_id) = context.transaction_id.take() {
+                    self.storage.commit_transaction(tx_id)?;
+                }
+                ExecutionResult::new()
+            },
+            Statement::Rollback => {
+                if let Some(tx_id) = context.transaction_id.take() {
+                    self.storage.rollback_transaction(tx_id)?;
+                }
+                ExecutionResult::new()
+            },
         })
+    }
+
+    /// Execute a batch of statements within an implicit transaction.
+    /// On any error, the entire batch is rolled back.
+    pub fn execute_script(&self, context: &mut ExecutionContext, statements: &[Statement]) -> Result<Vec<ExecutionResult>, EvaluationError> {
+        let tx_id = self.storage.begin_transaction()?;
+        context.transaction_id = Some(tx_id);
+
+        let mut results = Vec::new();
+        for statement in statements {
+            match self.execute(context, statement) {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    // If explicit transaction commands changed the tx_id, use whatever is current
+                    if let Some(active_tx) = context.transaction_id.take() {
+                        let _ = self.storage.rollback_transaction(active_tx);
+                    } else {
+                        // The implicit transaction may have been committed/replaced by explicit tx commands
+                        // Try to rollback the original implicit tx
+                        let _ = self.storage.rollback_transaction(tx_id);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        // Commit the implicit transaction if still active
+        if let Some(active_tx) = context.transaction_id.take() {
+            self.storage.commit_transaction(active_tx)?;
+        }
+
+        Ok(results)
     }
 
     fn create_journal(&self, context: &ExecutionContext, journal: &JournalExpression) -> Result<ExecutionResult, EvaluationError> {

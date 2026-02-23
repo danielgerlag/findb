@@ -335,3 +335,83 @@ fn test_parse_errors() {
     let result = lexer::parse("INVALID GARBAGE !!!");
     assert!(result.is_err(), "Should fail on invalid FQL");
 }
+
+#[test]
+fn test_transaction_commit() {
+    let (exec, mut ctx) = setup();
+
+    let results = execute_script(&exec, &mut ctx, "
+        BEGIN;
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE JOURNAL 2023-01-01, 1000, 'Investment' CREDIT @equity, DEBIT @bank;
+        COMMIT;
+        GET balance(@bank, 2023-12-31) AS result
+    ");
+
+    let get_result = results.last().unwrap();
+    let balance = &get_result.variables["result"];
+    match balance {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(1000)),
+        _ => panic!("Expected Money, got {:?}", balance),
+    }
+}
+
+#[test]
+fn test_transaction_rollback() {
+    let (exec, mut ctx) = setup();
+
+    // First create account outside a transaction
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+    ");
+
+    // Begin, create journal, then rollback
+    execute_script(&exec, &mut ctx, "
+        BEGIN;
+        CREATE JOURNAL 2023-01-01, 1000, 'Investment' CREDIT @equity, DEBIT @bank;
+        ROLLBACK;
+    ");
+
+    // Balance should be 0 since we rolled back
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@bank, 2023-12-31) AS result
+    ");
+    let balance = &results[0].variables["result"];
+    match balance {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::ZERO),
+        _ => panic!("Expected Money, got {:?}", balance),
+    }
+}
+
+#[test]
+fn test_implicit_transaction_rollback_on_error() {
+    let (exec, mut ctx) = setup();
+
+    // Set up accounts
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+    ");
+
+    // Execute a script that will fail partway through (referencing nonexistent account)
+    // The implicit transaction in execute_script should roll back everything
+    let statements = lexer::parse("
+        CREATE JOURNAL 2023-01-01, 1000, 'Investment' CREDIT @equity, DEBIT @bank;
+        CREATE JOURNAL 2023-02-01, 500, 'Bad' CREDIT @nonexistent, DEBIT @bank;
+    ").unwrap();
+
+    let result = exec.execute_script(&mut ctx, &statements);
+    assert!(result.is_err(), "Script should fail on missing account");
+
+    // The first journal should have been rolled back too
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@bank, 2023-12-31) AS result
+    ");
+    let balance = &results[0].variables["result"];
+    match balance {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::ZERO, "Balance should be 0 after rollback"),
+        _ => panic!("Expected Money, got {:?}", balance),
+    }
+}

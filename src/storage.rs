@@ -21,7 +21,11 @@ pub enum StorageError {
     AccountNotFound(String),
     #[error("rate not found: {0}")]
     RateNotFound(String),
+    #[error("no active transaction")]
+    NoActiveTransaction,
 }
+
+pub type TransactionId = u64;
 
 pub trait StorageBackend: Send + Sync {
     fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError>;
@@ -33,6 +37,17 @@ pub trait StorageBackend: Send + Sync {
     fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError>;
     fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError>;
     fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)>;
+
+    fn begin_transaction(&self) -> Result<TransactionId, StorageError>;
+    fn commit_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError>;
+    fn rollback_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError>;
+}
+
+struct Snapshot {
+    ledger_accounts: BTreeMap<Arc<str>, LedgerStore>,
+    rates: BTreeMap<Arc<str>, RateStore>,
+    journals: BTreeMap<u128, JournalEntry>,
+    sequence_value: u64,
 }
 
 pub struct InMemoryStorage {
@@ -40,6 +55,8 @@ pub struct InMemoryStorage {
     rates: RwLock<BTreeMap<Arc<str>, RateStore>>,
     journals: RwLock<BTreeMap<u128, JournalEntry>>,
     sequence_counter: AtomicU64,
+    tx_counter: AtomicU64,
+    snapshots: RwLock<HashMap<TransactionId, Snapshot>>,
 }
 
 impl InMemoryStorage {
@@ -49,6 +66,8 @@ impl InMemoryStorage {
             rates: RwLock::new(BTreeMap::new()),
             journals: RwLock::new(BTreeMap::new()),
             sequence_counter: AtomicU64::new(1),
+            tx_counter: AtomicU64::new(1),
+            snapshots: RwLock::new(HashMap::new()),
         }
     }
 
@@ -174,14 +193,40 @@ impl StorageBackend for InMemoryStorage {
         }
         result
     }
+
+    fn begin_transaction(&self) -> Result<TransactionId, StorageError> {
+        let tx_id = self.tx_counter.fetch_add(1, Ordering::SeqCst);
+        let snapshot = Snapshot {
+            ledger_accounts: self.ledger_accounts.read().unwrap().clone(),
+            rates: self.rates.read().unwrap().clone(),
+            journals: self.journals.read().unwrap().clone(),
+            sequence_value: self.sequence_counter.load(Ordering::SeqCst),
+        };
+        self.snapshots.write().unwrap().insert(tx_id, snapshot);
+        tracing::debug!(tx_id, "Transaction started");
+        Ok(tx_id)
+    }
+
+    fn commit_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError> {
+        self.snapshots.write().unwrap().remove(&tx_id)
+            .ok_or(StorageError::NoActiveTransaction)?;
+        tracing::debug!(tx_id, "Transaction committed");
+        Ok(())
+    }
+
+    fn rollback_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError> {
+        let snapshot = self.snapshots.write().unwrap().remove(&tx_id)
+            .ok_or(StorageError::NoActiveTransaction)?;
+        *self.ledger_accounts.write().unwrap() = snapshot.ledger_accounts;
+        *self.rates.write().unwrap() = snapshot.rates;
+        *self.journals.write().unwrap() = snapshot.journals;
+        self.sequence_counter.store(snapshot.sequence_value, Ordering::SeqCst);
+        tracing::debug!(tx_id, "Transaction rolled back");
+        Ok(())
+    }
 }
 
-// #[derive(Debug, Clone)]
-// struct LedgerEntry {
-//     journal_id: u128,
-//     amount: f64,
-// }
-
+#[derive(Clone)]
 struct LedgerStore {
     account_type: AccountType,
     days: BTreeMap<Date, LedgerDay>,
@@ -348,6 +393,7 @@ impl LedgerDay {
 }
 
 
+#[derive(Clone)]
 struct RateStore {
     values: BTreeMap<Date, Decimal>,
 }

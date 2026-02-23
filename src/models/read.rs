@@ -5,6 +5,7 @@ use time::{Date, OffsetDateTime};
 
 use super::DataValue;
 
+#[derive(Clone)]
 pub struct JournalEntry {
     pub id: u128,
     pub sequence: u64,

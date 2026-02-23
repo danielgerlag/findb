@@ -108,48 +108,46 @@ async fn fql_handler(
 
     let eff_date = time::OffsetDateTime::now_utc().date();
     let mut context = ExecutionContext::new(eff_date, QueryVariables::new());
-    let mut results = Vec::new();
-    let mut total_journals = 0usize;
-    let mut executed = 0usize;
     
-    for statement in statements.iter() {
-        match exec.execute(&mut context, statement) {
-            Ok(result) => {
+    match exec.execute_script(&mut context, &statements) {
+        Ok(script_results) => {
+            let mut results = Vec::new();
+            let mut total_journals = 0usize;
+            for result in &script_results {
                 total_journals += result.journals_created;
                 let result_str = result.to_string();
                 if !result_str.trim().is_empty() {
                     results.push(result_str);
                 }
-                executed += 1;
-            },
-            Err(e) => {
-                tracing::error!("FQL execution error: {}", e);
-                let resp = FqlResponse {
-                    success: false,
-                    results,
-                    error: Some(format!("{}", e)),
-                    metadata: FqlMetadata { statements_executed: executed, journals_created: total_journals },
-                };
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(resp));
             }
+
+            let duration = start.elapsed();
+            tracing::debug!(
+                statements = script_results.len(),
+                journals = total_journals,
+                duration_ms = duration.as_millis() as u64,
+                "FQL query executed"
+            );
+
+            let resp = FqlResponse {
+                success: true,
+                results,
+                error: None,
+                metadata: FqlMetadata { statements_executed: script_results.len(), journals_created: total_journals },
+            };
+            (StatusCode::OK, Json(resp))
+        }
+        Err(e) => {
+            tracing::error!("FQL execution error: {}", e);
+            let resp = FqlResponse {
+                success: false,
+                results: vec![],
+                error: Some(format!("{}", e)),
+                metadata: FqlMetadata { statements_executed: 0, journals_created: 0 },
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(resp))
         }
     }
-
-    let duration = start.elapsed();
-    tracing::debug!(
-        statements = executed,
-        journals = total_journals,
-        duration_ms = duration.as_millis() as u64,
-        "FQL query executed"
-    );
-
-    let resp = FqlResponse {
-        success: true,
-        results,
-        error: None,
-        metadata: FqlMetadata { statements_executed: executed, journals_created: total_journals },
-    };
-    (StatusCode::OK, Json(resp))
 }
 
 // --- REST API types ---
