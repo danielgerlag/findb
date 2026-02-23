@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc, fmt::Display};
 
-use ordered_float::OrderedFloat;
 use prettytable::{Table, row};
+use rust_decimal::Decimal;
 use time::Date;
 
 use crate::ast::AccountType;
@@ -14,8 +14,8 @@ pub enum DataValue {
     Null,
     Bool(bool),
     Int(i64),
-    Money(OrderedFloat<f64>),
-    Percentage(OrderedFloat<f64>),
+    Money(Decimal),
+    Percentage(Decimal),
     String(Arc<str>),
     Date(Date),
     List(Vec<DataValue>),
@@ -97,8 +97,8 @@ pub struct StatementTxn {
     pub journal_id: u128,
     pub date: Date,
     pub description: Arc<str>,
-    pub amount: OrderedFloat<f64>,
-    pub balance: OrderedFloat<f64>,
+    pub amount: Decimal,
+    pub balance: Decimal,
 
 }
 
@@ -106,5 +106,5 @@ pub struct StatementTxn {
 pub struct TrialBalanceItem {
     pub account_id: Arc<str>,
     pub account_type: AccountType,    
-    pub balance: OrderedFloat<f64>,
+    pub balance: Decimal,
 }

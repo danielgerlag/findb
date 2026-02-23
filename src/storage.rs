@@ -1,6 +1,6 @@
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::{Arc, RwLock}, ops::Bound};
 
-use ordered_float::OrderedFloat;
+use rust_decimal::Decimal;
 use time::Date;
 use uuid::Uuid;
 
@@ -59,7 +59,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_rate(&self, id: &str, date: Date) -> Result<f64, StorageError> {
+    pub fn get_rate(&self, id: &str, date: Date) -> Result<Decimal, StorageError> {
         let rates = self.rates.read().unwrap();
         let rate_store = rates.get(id)
             .ok_or_else(|| StorageError::RateNotFound(id.to_string()))?;
@@ -99,7 +99,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<f64, StorageError> {
+    pub fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
         let ledger_accounts = self.ledger_accounts.read().unwrap();
         let acct = ledger_accounts.get(account_id)
             .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
@@ -123,8 +123,8 @@ impl Storage {
                         journal_id: e.0,
                         date: j.date,
                         description: j.description.clone(),
-                        amount: OrderedFloat(e.1),
-                        balance: OrderedFloat(e.2),
+                        amount: e.1,
+                        balance: e.2,
                     });
                 },
                 None => {},
@@ -172,7 +172,7 @@ impl LedgerStore {
         }
     }
 
-    pub fn add_entry(&mut self, date: Date, journal_id: u128, amount: f64, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) {
+    pub fn add_entry(&mut self, date: Date, journal_id: u128, amount: Decimal, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) {
         let amount = match self.account_type {
             AccountType::Asset | AccountType::Expense => amount,
             AccountType::Liability | AccountType::Equity | AccountType::Income => -amount,
@@ -188,8 +188,8 @@ impl LedgerStore {
         
     }
 
-    pub fn get_balance(&self, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> f64 {        
-        let mut balance = 0.0;
+    pub fn get_balance(&self, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Decimal {        
+        let mut balance = Decimal::ZERO;
         let mut days = self.days.range((Bound::Unbounded, Bound::Included(date)));
         while let Some((_, day)) = days.next() {
             match &dimension {
@@ -204,7 +204,7 @@ impl LedgerStore {
         balance
     }
 
-    pub fn get_statement(&self, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<(u128, f64, f64)> {        
+    pub fn get_statement(&self, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<(u128, Decimal, Decimal)> {        
         let mut result = Vec::new();
         
         let balance_date = match from {
@@ -240,9 +240,9 @@ impl LedgerStore {
 
 #[derive(Debug, Clone)]
 struct LedgerDay {
-    sum_by_dimension: HashMap<Arc<str>, HashMap<Arc<DataValue>, f64>>,
-    total: f64,
-    entries: HashMap<u128, f64>, // journal_id -> amount
+    sum_by_dimension: HashMap<Arc<str>, HashMap<Arc<DataValue>, Decimal>>,
+    total: Decimal,
+    entries: HashMap<u128, Decimal>,
     entry_by_dimension: HashMap<(Arc<str>, Arc<DataValue>), Vec<u128>>,
 }
 
@@ -250,13 +250,13 @@ impl LedgerDay {
     pub fn new() -> Self {
         Self {
             sum_by_dimension: HashMap::new(),
-            total: 0.0,
+            total: Decimal::ZERO,
             entries: HashMap::new(),
             entry_by_dimension: HashMap::new(),
         }
     }
 
-    pub fn add_entry(&mut self, journal_id: u128, amount: f64, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) {
+    pub fn add_entry(&mut self, journal_id: u128, amount: Decimal, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) {
         
         self.entries.insert(journal_id, amount);
         for (k, v) in dimensions {
@@ -268,26 +268,25 @@ impl LedgerDay {
         
     }
 
-    fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>, amount: f64) {
+    fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>, amount: Decimal) {
         self.total += amount;
         for (dimension, value) in dimensions {
-            //let sum = self.sum_by_dimension.entry((dimension.clone(), value.clone())).or_insert(0.0);
             let sum = self.sum_by_dimension
                 .entry(dimension.clone())
                 .or_insert(HashMap::new())
                 .entry(value.clone())
-                .or_insert(0.0);
+                .or_insert(Decimal::ZERO);
         
             *sum += amount;
         }
     }
 
-    pub fn get_balance(&self, dimension: &(Arc<str>, Arc<DataValue>)) -> f64 {
+    pub fn get_balance(&self, dimension: &(Arc<str>, Arc<DataValue>)) -> Decimal {
         *self.sum_by_dimension
             .get(&dimension.0)
             .unwrap_or(&HashMap::new())
             .get(&dimension.1)
-            .unwrap_or(&0.0)
+            .unwrap_or(&Decimal::ZERO)
     }
 
     pub fn get_dimension_values(&self, dimension: Arc<str>) -> HashSet<Arc<DataValue>> {
@@ -297,7 +296,7 @@ impl LedgerDay {
         }
     }
 
-    pub fn get_entries(&self, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<(u128, f64)> {
+    pub fn get_entries(&self, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<(u128, Decimal)> {
         let mut result = Vec::new();
 
         match dimension {
@@ -327,7 +326,7 @@ impl LedgerDay {
 
 
 struct RateStore {
-    values: BTreeMap<Date, f64>,
+    values: BTreeMap<Date, Decimal>,
 }
 
 impl RateStore {
@@ -337,11 +336,11 @@ impl RateStore {
         }
     }
 
-    pub fn add_rate(&mut self, date: Date, value: f64) {
+    pub fn add_rate(&mut self, date: Date, value: Decimal) {
         self.values.insert(date, value);
     }
 
-    pub fn get_rate(&self, date: Date) -> Result<f64, StorageError> {
+    pub fn get_rate(&self, date: Date) -> Result<Decimal, StorageError> {
         let mut rates = self.values.range((Bound::Unbounded, Bound::Included(date)));
         match rates.next_back() {
             Some((_, rate)) => Ok(*rate),

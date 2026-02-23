@@ -1,7 +1,5 @@
 use std::{sync::Arc, ops::Bound};
 
-use ordered_float::OrderedFloat;
-
 use crate::{function_registry::ScalarFunction, models::{DataValue, TrialBalanceItem}, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::Storage};
 
 
@@ -39,7 +37,7 @@ impl ScalarFunction for Balance {
 
         let result = self.storage.get_balance(&account_id, *effective_date, dimension)?;
 
-        Ok(DataValue::Money(OrderedFloat::from(result)))
+        Ok(DataValue::Money(result))
     }
 }
 
@@ -112,7 +110,7 @@ impl ScalarFunction for TrialBalance {
             result.push(TrialBalanceItem {
                 account_id,
                 account_type,
-                balance: OrderedFloat::from(balance),
+                balance,
             });
         }
 

@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use ordered_float::OrderedFloat;
+use rust_decimal::{Decimal, MathematicalOps};
 use time::Date;
 
 use crate::{ast, models::DataValue, storage::{StorageError, Storage}, function_registry::{FunctionRegistry, Function}};
@@ -164,12 +164,10 @@ impl ExpressionEvaluator {
                 ast::Literal::Text(t) => DataValue::String(t.clone()),
                 ast::Literal::Null => DataValue::Null,
                 ast::Literal::Integer(i) => DataValue::Int(*i),
-                ast::Literal::Real(r) => DataValue::Money(OrderedFloat::from(*r)),
+                ast::Literal::Real(r) => DataValue::Money(Decimal::from_f64_retain(*r).unwrap_or(Decimal::ZERO)),
                 ast::Literal::Date(d) => DataValue::Date(*d),
                 ast::Literal::Account(a) => DataValue::AccountId(a.clone()),
-                ast::Literal::Percentage(p) => DataValue::Percentage(OrderedFloat::from(*p)),
-                
-                
+                ast::Literal::Percentage(p) => DataValue::Percentage(Decimal::from_f64_retain(*p).unwrap_or(Decimal::ZERO)),
             },
             ast::UnaryExpression::Property { name, key } => match context.get_variable(name) {
                 Some(v) => match v {
@@ -197,8 +195,8 @@ impl ExpressionEvaluator {
                 DataValue::Dimension((d.id.clone(), Arc::new(value)))
             }
             ast::UnaryExpression::Rate(rate) => {
-                let val = self.storage.get_rate(rate.as_ref(), context.get_effective_date()).unwrap();
-                DataValue::Percentage(OrderedFloat::from(val))
+                let val = self.storage.get_rate(rate.as_ref(), context.get_effective_date())?;
+                DataValue::Percentage(val)
             },
         };
         Ok(result)
@@ -284,8 +282,8 @@ impl ExpressionEvaluator {
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 + n2),
                     (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 + n2),
-                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) + n2),
-                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 + n2 as f64),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(Decimal::from(n1) + n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 + Decimal::from(n2)),
                     //(QueryValue::Date(d1), QueryValue::Date(d2)) => QueryValue::Date(d1.add(d2)),
 
                     (DataValue::Int(n1), DataValue::String(s2)) => DataValue::String(Arc::from(n1.to_string() + &s2)),
@@ -301,8 +299,8 @@ impl ExpressionEvaluator {
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 - n2),
                     (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 - n2),
-                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) - n2),
-                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 - n2 as f64),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(Decimal::from(n1) - n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 - Decimal::from(n2)),
                     _ => DataValue::Null,
                 }
             }
@@ -312,8 +310,8 @@ impl ExpressionEvaluator {
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 * n2),
                     (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 * n2),
-                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) * n2),
-                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 * n2 as f64),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(Decimal::from(n1) * n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 * Decimal::from(n2)),
                     _ => DataValue::Null,
                 }
             }
@@ -323,8 +321,8 @@ impl ExpressionEvaluator {
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 / n2),
                     (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 / n2),
-                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) / n2),
-                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 / n2 as f64),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(Decimal::from(n1) / n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 / Decimal::from(n2)),
                     _ => DataValue::Null,
                 }
             }
@@ -341,8 +339,8 @@ impl ExpressionEvaluator {
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 % n2),
                     (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 % n2),
-                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1 as f64) % n2),
-                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 % n2 as f64),
+                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(Decimal::from(n1) % n2),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(n1 % Decimal::from(n2)),
                     _ => DataValue::Null,
                 }
             },
@@ -354,12 +352,24 @@ impl ExpressionEvaluator {
                         if n2 >= 0 {
                             DataValue::Int(n1.pow(n2 as u32))
                         } else {
-                            DataValue::Money(OrderedFloat::from((n1 as f64).powi(n2 as i32)))
+                            DataValue::Money(Decimal::from_f64_retain((n1 as f64).powi(n2 as i32)).unwrap_or(Decimal::ZERO))
                         }
                     },
-                    (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from(n1.0.powf(n2.0))),
-                    (DataValue::Money(n1), DataValue::Int(n2)) => DataValue::Money(OrderedFloat::from(n1.0.powi(n2 as i32))),
-                    (DataValue::Int(n1), DataValue::Money(n2)) => DataValue::Money(OrderedFloat::from((n1 as f64).powf(n2.0))),
+                    (DataValue::Money(n1), DataValue::Int(n2)) => {
+                        n1.checked_powd(Decimal::from(n2))
+                            .map(DataValue::Money)
+                            .unwrap_or(DataValue::Null)
+                    },
+                    (DataValue::Int(n1), DataValue::Money(n2)) => {
+                        Decimal::from(n1).checked_powd(n2)
+                            .map(DataValue::Money)
+                            .unwrap_or(DataValue::Null)
+                    },
+                    (DataValue::Money(n1), DataValue::Money(n2)) => {
+                        n1.checked_powd(n2)
+                            .map(DataValue::Money)
+                            .unwrap_or(DataValue::Null)
+                    },
                     _ => DataValue::Null,
                 }
             },

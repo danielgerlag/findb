@@ -1,5 +1,7 @@
 use std::{sync::Arc, collections::{BTreeMap, HashMap}, fmt::Display};
 
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use time::Date;
 
 use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::Storage, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
@@ -90,8 +92,8 @@ impl StatementExecutor {
         eval_ctx.set_effective_date(date);
         
         let journal_amount = match self.expression_evaluator.evaluate_expression(&eval_ctx, &journal.amount)? {
-            DataValue::Money(d) => d.0,
-            DataValue::Int(i) => i as f64,
+            DataValue::Money(d) => d,
+            DataValue::Int(i) => Decimal::from(i),
             _ => return Err(EvaluationError::InvalidType),
         };
         
@@ -122,7 +124,7 @@ impl StatementExecutor {
         Ok(result)
     }
 
-    fn build_ledger_entries(&self, eval_ctx: &ExpressionEvaluationContext, operations: &Vec<LedgerOperation>, journal_amount: f64) -> Result<Vec<LedgerEntryCommand>, EvaluationError> {
+    fn build_ledger_entries(&self, eval_ctx: &ExpressionEvaluationContext, operations: &Vec<LedgerOperation>, journal_amount: Decimal) -> Result<Vec<LedgerEntryCommand>, EvaluationError> {
         let mut entries = Vec::new();
         for op in operations {
             let cmd = match op {
@@ -131,9 +133,9 @@ impl StatementExecutor {
                         account_id: op.account.clone(),
                         amount: match &op.amount {
                             Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, &amount)? {
-                                DataValue::Money(d) => d.0,
-                                DataValue::Int(i) => i as f64,
-                                DataValue::Percentage(p) => journal_amount * p.0,
+                                DataValue::Money(d) => d,
+                                DataValue::Int(i) => Decimal::from(i),
+                                DataValue::Percentage(p) => journal_amount * p,
                                 _ => return Err(EvaluationError::InvalidType),
                             },
                             None => journal_amount,
@@ -145,9 +147,9 @@ impl StatementExecutor {
                         account_id: op.account.clone(),
                         amount: match &op.amount {
                             Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, &amount)? {
-                                DataValue::Money(d) => d.0,
-                                DataValue::Int(i) => i as f64,
-                                DataValue::Percentage(p) => journal_amount * p.0,
+                                DataValue::Money(d) => d,
+                                DataValue::Int(i) => Decimal::from(i),
+                                DataValue::Percentage(p) => journal_amount * p,
                                 _ => return Err(EvaluationError::InvalidType),
                             },
                             None => journal_amount,
@@ -195,9 +197,9 @@ impl StatementExecutor {
             id: rate.id.clone(),
             date,
             rate: match self.expression_evaluator.evaluate_expression(&eval_ctx, &rate.rate)? {
-                DataValue::Money(d) => d.0,
-                DataValue::Int(i) => i as f64,
-                DataValue::Percentage(p) => p.0,
+                DataValue::Money(d) => d,
+                DataValue::Int(i) => Decimal::from(i),
+                DataValue::Percentage(p) => p,
                 _ => return Err(EvaluationError::InvalidType),
             },
         };
@@ -260,7 +262,7 @@ impl StatementExecutor {
                 
                 let accural = match amounts.get(dimension_value) {
                     Some(pv) => *pv,
-                    None => 0.0,
+                    None => Decimal::ZERO,
                 };
                 let delta = calc_daily_accural_amount(rate, open + accural, &accrue.compounding);
                 
@@ -275,7 +277,7 @@ impl StatementExecutor {
 
         for (dimension_value, amount) in amounts {
 
-            let amount = (amount * 100.0).round() / 100.0;
+            let amount = amount.round_dp(2);
             let dimensions = {
                 let mut dimensions = BTreeMap::new();
                 dimensions.insert(accrue.by_dimension.clone(), dimension_value.into());
@@ -297,15 +299,10 @@ impl StatementExecutor {
     }
 }
 
-fn calc_daily_accural_amount(rate: f64, pv: f64, compounding: &Option<Compounding>) -> f64 {
+fn calc_daily_accural_amount(rate: Decimal, pv: Decimal, compounding: &Option<Compounding>) -> Decimal {
     match compounding {
         Some(Compounding::Continuous) => pv * rate,
-        Some(Compounding::Daily) => pv * rate / 365.0,
+        Some(Compounding::Daily) => pv * rate / dec!(365),
         None => pv * rate,
     }
-    // match compounding {
-    //     Some(Compounding::Continuous) => pv * (1.0 + rate).exp(),
-    //     Some(Compounding::Daily) => pv * (1.0 + rate / 365.0).powf(365.0),
-    //     None => pv * (1.0 + rate),
-    // }
 }
