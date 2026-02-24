@@ -2,6 +2,9 @@ use std::{sync::Arc, collections::BTreeMap};
 
 use time::Date;
 
+// Re-export from findb-core so all existing crate::ast::AccountType references work
+pub use findb_core::models::{AccountType, AccountExpression};
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement{
@@ -69,21 +72,6 @@ pub struct JournalExpression {
     pub amount: Expression,
     pub operations: Vec<LedgerOperation>,
     pub dimensions: BTreeMap<Arc<str>, Expression>,
-}
-
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
-pub enum AccountType {
-    Asset,
-    Liability,
-    Equity,
-    Income,
-    Expense,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AccountExpression {
-    pub id: Arc<str>,
-    pub account_type: AccountType,
 }
 
 #[derive(Debug, Clone, PartialEq)]

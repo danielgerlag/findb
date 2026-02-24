@@ -1,0 +1,13 @@
+[package]
+name = "findb-postgres"
+version = "0.1.0"
+edition = "2021"
+description = "PostgreSQL storage backend for FinanceDB"
+
+[dependencies]
+findb-core = { path = "../findb-core" }
+postgres = "0.19"
+rust_decimal = { version = "1.31", features = ["maths"] }
+time = { version = "0.3.23", features = ["std"] }
+tracing = "0.1"
+uuid = { version = "1.4.0", features = ["v4"] }

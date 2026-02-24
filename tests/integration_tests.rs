@@ -1247,7 +1247,7 @@ fn assert_trial_balance_balanced(tb_val: &DataValue, label: &str) {
 // --- SQLite backend tests ---
 
 fn setup_sqlite() -> (StatementExecutor, ExecutionContext) {
-    use findb::sqlite_storage::SqliteStorage;
+    use findb_sqlite::SqliteStorage;
     let storage: Arc<dyn findb::storage::StorageBackend> = Arc::new(SqliteStorage::new(":memory:").unwrap());
     let function_registry = FunctionRegistry::new();
     register_functions(&function_registry, &storage);
@@ -1366,7 +1366,7 @@ fn pg_connection_string() -> String {
 }
 
 fn setup_postgres() -> (StatementExecutor, ExecutionContext) {
-    use findb::postgres_storage::PostgresStorage;
+    use findb_postgres::PostgresStorage;
 
     // Drop all tables first to ensure a clean slate
     let conn_str = pg_connection_string();

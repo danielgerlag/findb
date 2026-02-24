@@ -593,13 +593,15 @@ dependencies = [
  "axum",
  "clap",
  "criterion",
+ "findb-core",
+ "findb-postgres",
+ "findb-sqlite",
  "metrics",
  "metrics-exporter-prometheus",
  "peg",
  "postgres",
  "prettytable-rs",
  "prost",
- "rusqlite",
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
@@ -613,6 +615,40 @@ dependencies = [
  "tonic-build",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "findb-core"
+version = "0.1.0"
+dependencies = [
+ "prettytable-rs",
+ "rust_decimal",
+ "thiserror",
+ "time",
+]
+
+[[package]]
+name = "findb-postgres"
+version = "0.1.0"
+dependencies = [
+ "findb-core",
+ "postgres",
+ "rust_decimal",
+ "time",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "findb-sqlite"
+version = "0.1.0"
+dependencies = [
+ "findb-core",
+ "rusqlite",
+ "rust_decimal",
+ "time",
+ "tracing",
  "uuid",
 ]
 

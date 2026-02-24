@@ -1,10 +1,9 @@
-use std::{sync::Arc, collections::BTreeMap};
+use std::{collections::BTreeMap, sync::Arc};
 
 use rust_decimal::Decimal;
 use time::Date;
 
 use super::DataValue;
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateJournalCommand {
@@ -21,12 +20,10 @@ pub enum LedgerEntryCommand {
     Credit {account_id: Arc<str>, amount: Decimal},
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateRateCommand {
     pub id: Arc<str>,    
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetRateCommand {

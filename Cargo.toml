@@ -1,11 +1,20 @@
+[workspace]
+members = [
+    ".",
+    "crates/findb-core",
+    "crates/findb-sqlite",
+    "crates/findb-postgres",
+]
+
 [package]
 name = "findb"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
+findb-core = { path = "crates/findb-core" }
+findb-sqlite = { path = "crates/findb-sqlite" }
+findb-postgres = { path = "crates/findb-postgres" }
 axum = "0.6.20"
 clap = { version = "4.3", features = ["derive"] }
 metrics = "0.21"
@@ -15,8 +24,6 @@ prost = "0.12"
 prettytable-rs = "0.10.0"
 rust_decimal = { version = "1.31", features = ["maths"] }
 rust_decimal_macros = "1.31"
-rusqlite = { version = "0.31", features = ["bundled"] }
-postgres = "0.19"
 serde = { version = "1.0.171", features = ["derive"] }
 serde_json = "1.0.102"
 subtle = "2.5"
@@ -34,6 +41,8 @@ tonic-build = "0.10"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+findb-sqlite = { path = "crates/findb-sqlite" }
+findb-postgres = { path = "crates/findb-postgres" }
 postgres = "0.19"
 rust_decimal_macros = "1.31"
 
