@@ -604,6 +604,7 @@ dependencies = [
  "rust_decimal_macros",
  "serde",
  "serde_json",
+ "subtle",
  "thiserror",
  "time",
  "tokio",

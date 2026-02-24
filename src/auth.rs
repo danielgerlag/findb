@@ -5,6 +5,7 @@ use axum::{
     Json, Extension,
 };
 use serde::Serialize;
+use subtle::ConstantTimeEq;
 
 use crate::config::AuthConfig;
 
@@ -42,7 +43,9 @@ pub async fn auth_middleware<B>(
 
     match api_key {
         Some(key) => {
-            match config.api_keys.iter().find(|entry| entry.key == key) {
+            match config.api_keys.iter().find(|entry| {
+                    entry.key.as_bytes().ct_eq(key.as_bytes()).into()
+                }) {
                 Some(entry) => {
                     tracing::debug!(caller = %entry.name, role = %entry.role, "Authenticated request");
                     req.extensions_mut().insert(CallerIdentity {

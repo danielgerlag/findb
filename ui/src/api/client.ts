@@ -1,5 +1,10 @@
 const BASE = ''
 
+/** Escape a string for safe interpolation into FQL single-quoted literals. */
+export function escapeFql(s: string): string {
+  return s.replace(/'/g, "''")
+}
+
 export interface FqlResponse {
   success: boolean
   results: string[]
@@ -26,12 +31,20 @@ export interface StatementTxn {
 async function safeJson<T>(res: Response): Promise<T> {
   const text = await res.text()
   if (!text) {
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+    }
     throw new Error(`Server returned empty response (HTTP ${res.status})`)
   }
   try {
     return JSON.parse(text)
   } catch {
-    throw new Error(`Server returned non-JSON response (HTTP ${res.status}): ${text.slice(0, 200)}`)
+    // If the response wasn't OK and isn't JSON, surface the HTTP error
+    throw new Error(
+      !res.ok
+        ? `HTTP ${res.status}: ${text.slice(0, 200)}`
+        : `Server returned non-JSON response (HTTP ${res.status}): ${text.slice(0, 200)}`
+    )
   }
 }
 

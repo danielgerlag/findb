@@ -64,7 +64,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { executeFql } from '../api/client'
+import { executeFql, escapeFql } from '../api/client'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import DatePicker from 'primevue/datepicker'
@@ -114,7 +114,7 @@ async function doLookup() {
   if (!lookupId.value) return
   const date = formatDate(lookupDate.value)
   try {
-    const resp = await executeFql(`GET fx_rate('${lookupId.value}', ${date}) AS rate`)
+    const resp = await executeFql(`GET fx_rate('${escapeFql(lookupId.value)}', ${date}) AS rate`)
     if (resp.success && resp.results.length > 0) {
       const resultText = resp.results[0] ?? ''
       const match = resultText.match(/rate:\s*(.+)/)

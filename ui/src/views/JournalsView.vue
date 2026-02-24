@@ -76,7 +76,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { executeFql } from '../api/client'
+import { executeFql, escapeFql } from '../api/client'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
@@ -103,11 +103,11 @@ function formatDate(d: Date): string {
 const fqlPreview = computed(() => {
   if (!amount.value || !description.value || entries.value.length === 0) return ''
   const date = formatDate(journalDate.value)
-  let fql = `CREATE JOURNAL ${date}, ${amount.value}, '${description.value}'`
+  let fql = `CREATE JOURNAL ${date}, ${amount.value}, '${escapeFql(description.value)}'`
 
   const dims = dimensions.value.filter((d) => d.key && d.value)
   if (dims.length > 0) {
-    fql += `\nFOR ${dims.map((d) => `${d.key}='${d.value}'`).join(', ')}`
+    fql += `\nFOR ${dims.map((d) => `${d.key}='${escapeFql(d.value)}'`).join(', ')}`
   }
 
   const ops = entries.value

@@ -15,6 +15,24 @@ pub mod pb {
 
 use pb::finance_db_server::FinanceDb;
 
+/// Escape a string value for safe interpolation into FQL single-quoted literals.
+fn escape_fql(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Validate that a value contains only safe identifier characters.
+fn is_safe_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_identifier(s: &str, field: &str) -> Result<(), Status> {
+    if !is_safe_identifier(s) {
+        return Err(Status::invalid_argument(format!("Invalid {}: must be alphanumeric", field)));
+    }
+    Ok(())
+}
+
 pub struct FinanceDbService {
     executor: Arc<StatementExecutor>,
 }
@@ -96,6 +114,8 @@ impl FinanceDb for FinanceDbService {
         request: Request<pb::CreateAccountRequest>,
     ) -> Result<Response<pb::CreateAccountResponse>, Status> {
         let req = request.into_inner();
+        validate_identifier(&req.id, "account ID")?;
+        validate_identifier(&req.account_type, "account type")?;
         let fql = format!("CREATE ACCOUNT @{} {}", req.id, req.account_type.to_uppercase());
         self.execute_fql(&fql)?;
         Ok(Response::new(pb::CreateAccountResponse { success: true }))
@@ -128,8 +148,12 @@ impl FinanceDb for FinanceDbService {
         request: Request<pb::GetBalanceRequest>,
     ) -> Result<Response<pb::GetBalanceResponse>, Status> {
         let req = request.into_inner();
+        validate_identifier(&req.account_id, "account ID")?;
         let dim = match (&req.dimension_key, &req.dimension_value) {
-            (Some(k), Some(v)) => format!(", {}='{}'", k, v),
+            (Some(k), Some(v)) => {
+                validate_identifier(k, "dimension key")?;
+                format!(", {}='{}'", k, escape_fql(v))
+            }
             _ => String::new(),
         };
         let fql = format!("GET balance(@{}, {}{}) AS result", req.account_id, req.date, dim);
@@ -152,8 +176,12 @@ impl FinanceDb for FinanceDbService {
         request: Request<pb::GetStatementRequest>,
     ) -> Result<Response<pb::GetStatementResponse>, Status> {
         let req = request.into_inner();
+        validate_identifier(&req.account_id, "account ID")?;
         let dim = match (&req.dimension_key, &req.dimension_value) {
-            (Some(k), Some(v)) => format!(", {}='{}'", k, v),
+            (Some(k), Some(v)) => {
+                validate_identifier(k, "dimension key")?;
+                format!(", {}='{}'", k, escape_fql(v))
+            }
             _ => String::new(),
         };
         let fql = format!(
@@ -208,6 +236,7 @@ impl FinanceDb for FinanceDbService {
         request: Request<pb::CreateRateRequest>,
     ) -> Result<Response<pb::CreateRateResponse>, Status> {
         let req = request.into_inner();
+        validate_identifier(&req.id, "rate ID")?;
         let fql = format!("CREATE RATE {}", req.id);
         self.execute_fql(&fql)?;
         Ok(Response::new(pb::CreateRateResponse { success: true }))
@@ -218,6 +247,7 @@ impl FinanceDb for FinanceDbService {
         request: Request<pb::SetRateRequest>,
     ) -> Result<Response<pb::SetRateResponse>, Status> {
         let req = request.into_inner();
+        validate_identifier(&req.rate_id, "rate ID")?;
         let fql = format!("SET RATE {} {} {}", req.rate_id, req.value, req.date);
         self.execute_fql(&fql)?;
         Ok(Response::new(pb::SetRateResponse { success: true }))
@@ -228,16 +258,23 @@ impl FinanceDb for FinanceDbService {
         request: Request<pb::CreateJournalRequest>,
     ) -> Result<Response<pb::CreateJournalResponse>, Status> {
         let req = request.into_inner();
+        for op in &req.operations {
+            validate_identifier(&op.account, "account ID")?;
+            validate_identifier(&op.op_type, "operation type")?;
+        }
+        for k in req.dimensions.keys() {
+            validate_identifier(k, "dimension key")?;
+        }
         let mut fql = format!(
             "CREATE JOURNAL {}, {}, '{}'",
-            req.date, req.amount, req.description
+            req.date, req.amount, escape_fql(&req.description)
         );
 
         if !req.dimensions.is_empty() {
             let dims: Vec<String> = req
                 .dimensions
                 .iter()
-                .map(|(k, v)| format!("{}='{}'", k, v))
+                .map(|(k, v)| format!("{}='{}'", k, escape_fql(v)))
                 .collect();
             fql.push_str(&format!(" FOR {}", dims.join(", ")));
         }

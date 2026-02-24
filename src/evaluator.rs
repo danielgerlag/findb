@@ -318,6 +318,12 @@ impl ExpressionEvaluator {
             ast::BinaryExpression::Divide(e1, e2) => {
                 let n1 = self.evaluate_expression(context, e1)?;
                 let n2 = self.evaluate_expression(context, e2)?;
+                // Check for division by zero
+                match &n2 {
+                    DataValue::Int(v) if *v == 0 => return Err(EvaluationError::DivideByZero),
+                    DataValue::Money(v) if v.is_zero() => return Err(EvaluationError::DivideByZero),
+                    _ => {}
+                }
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 / n2),
                     (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 / n2),
@@ -336,6 +342,11 @@ impl ExpressionEvaluator {
             ast::BinaryExpression::Modulo(e1, e2) => {
                 let n1 = self.evaluate_expression(context, e1)?;
                 let n2 = self.evaluate_expression(context, e2)?;
+                match &n2 {
+                    DataValue::Int(v) if *v == 0 => return Err(EvaluationError::DivideByZero),
+                    DataValue::Money(v) if v.is_zero() => return Err(EvaluationError::DivideByZero),
+                    _ => {}
+                }
                 match (n1, n2) {
                     (DataValue::Int(n1), DataValue::Int(n2)) => DataValue::Int(n1 % n2),
                     (DataValue::Money(n1), DataValue::Money(n2)) => DataValue::Money(n1 % n2),

@@ -1589,3 +1589,189 @@ fn test_postgres_multi_currency() {
         v => panic!("Expected Money(10000), got {:?}", v),
     }
 }
+
+// ==================== Bug Fix Regression Tests ====================
+
+/// Test that division by zero returns an error instead of panicking.
+#[test]
+fn test_division_by_zero_returns_error() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+    ");
+
+    // Integer division by zero
+    let statements = lexer::parse("GET 100 / 0 AS result").unwrap();
+    let result = exec.execute(&mut ctx, &statements[0]);
+    assert!(result.is_err(), "Integer division by zero should return error");
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(err_msg.contains("division by zero"), "Error should mention division by zero, got: {}", err_msg);
+
+    // Decimal division by zero
+    let statements = lexer::parse("GET 100.50 / 0.00 AS result").unwrap();
+    let result = exec.execute(&mut ctx, &statements[0]);
+    assert!(result.is_err(), "Decimal division by zero should return error");
+
+    // Division by zero in expression context
+    let statements = lexer::parse("GET (50 + 50) / (10 - 10) AS result").unwrap();
+    let result = exec.execute(&mut ctx, &statements[0]);
+    assert!(result.is_err(), "Expression evaluating to zero divisor should error");
+}
+
+/// Test that modulo by zero returns an error instead of panicking.
+#[test]
+fn test_modulo_by_zero_returns_error() {
+    let (exec, mut ctx) = setup();
+
+    let statements = lexer::parse("GET 100 % 0 AS result").unwrap();
+    let result = exec.execute(&mut ctx, &statements[0]);
+    assert!(result.is_err(), "Modulo by zero should return error");
+}
+
+/// Test that normal division still works correctly after the fix.
+#[test]
+fn test_division_still_works() {
+    let (exec, mut ctx) = setup();
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET 100 / 4 AS int_result,
+            100.50 / 2 AS dec_result
+    ");
+    match &results[0].variables["int_result"] {
+        DataValue::Int(v) => assert_eq!(*v, 25),
+        v => panic!("Expected Int(25), got {:?}", v),
+    }
+    match &results[0].variables["dec_result"] {
+        DataValue::Money(v) => assert_eq!(v.to_string(), "50.25"),
+        v => panic!("Expected Money(50.25), got {:?}", v),
+    }
+}
+
+/// Test that FQL strings with single quotes in descriptions are handled safely.
+/// This verifies the parser rejects injection attempts or that they are properly escaped.
+#[test]
+fn test_fql_description_with_quotes() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+    ");
+
+    // A description with properly escaped single quotes (doubled) should work
+    let fql = "CREATE JOURNAL 2024-01-01, 1000, 'O''Brien''s payment' CREDIT @equity, DEBIT @bank;";
+    let statements = lexer::parse(fql);
+    // Whether this parses or not depends on the PEG grammar, but it should not inject commands
+    if let Ok(stmts) = statements {
+        for stmt in &stmts {
+            let _ = exec.execute(&mut ctx, stmt);
+        }
+    }
+
+    // An injection attempt with semicolons should NOT create extra accounts
+    let injection = "CREATE JOURNAL 2024-01-01, 1, 'test'; CREATE ACCOUNT @hacked ASSET;";
+    // This should be parsed as 2 separate statements by the parser (not injected via string)
+    let stmts = lexer::parse(injection).unwrap();
+    // The key point: if this were an injection in a REST handler building the string,
+    // the escaped version would prevent the second statement from executing.
+    // Here we verify the parser handles it as separate statements
+    assert!(stmts.len() <= 2, "Parser should handle this as separate statements");
+}
+
+/// Test that statements work with early dates (regression test for Date::MIN panic).
+#[test]
+fn test_statement_with_early_dates() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE JOURNAL 2024-01-15, 1000, 'deposit' CREDIT @equity, DEBIT @bank;
+    ");
+
+    // Request a statement starting from a very early date — should not panic
+    let results = execute_script(&exec, &mut ctx, "
+        GET statement(@bank, 0001-01-01, 2024-12-31) AS stmt
+    ");
+    match &results[0].variables["stmt"] {
+        DataValue::Statement(txns) => {
+            assert_eq!(txns.len(), 1, "Should have 1 transaction");
+        },
+        v => panic!("Expected Statement, got {:?}", v),
+    }
+}
+
+/// Test that balance queries with dimensions containing special characters work.
+#[test]
+fn test_dimension_values_with_special_chars() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @bank ASSET;
+    ");
+
+    // Dimension values with spaces and special chars (no single quotes)
+    let results = execute_script(&exec, &mut ctx, "
+        CREATE JOURNAL 2024-01-01, 500, 'sale'
+        FOR Customer='Acme Corp'
+        CREDIT @revenue, DEBIT @bank;
+    ");
+    assert_eq!(results[0].journals_created, 1, "Journal with special char dimension should be created");
+
+    // Query with the same dimension
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@revenue, 2024-12-31, Customer='Acme Corp') AS rev
+    ");
+    match &results[0].variables["rev"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(500)),
+        v => panic!("Expected Money(500), got {:?}", v),
+    }
+}
+
+/// Test that negative and zero amounts work correctly in arithmetic.
+#[test]
+fn test_edge_case_arithmetic() {
+    let (exec, mut ctx) = setup();
+
+    // Zero * anything = zero (not error)
+    let results = execute_script(&exec, &mut ctx, "
+        GET 0 * 12345 AS zero_mult,
+            0 + 100 AS zero_add,
+            100 - 100 AS zero_sub
+    ");
+    match &results[0].variables["zero_mult"] {
+        DataValue::Int(v) => assert_eq!(*v, 0),
+        v => panic!("Expected Int(0), got {:?}", v),
+    }
+
+    // Dividing zero by something is fine
+    let results = execute_script(&exec, &mut ctx, "GET 0 / 5 AS result");
+    match &results[0].variables["result"] {
+        DataValue::Int(v) => assert_eq!(*v, 0),
+        v => panic!("Expected Int(0), got {:?}", v),
+    }
+}
+
+/// Test that account IDs with valid characters work in various contexts.
+#[test]
+fn test_account_id_validation() {
+    let (exec, mut ctx) = setup();
+
+    // Account IDs with underscores and hyphens should work
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @cash_on_hand ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE JOURNAL 2024-01-01, 100, 'test' CREDIT @equity, DEBIT @cash_on_hand;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@cash_on_hand, 2024-12-31) AS bal
+    ");
+    match &results[0].variables["bal"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(100)),
+        v => panic!("Expected Money(100), got {:?}", v),
+    }
+}

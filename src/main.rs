@@ -35,7 +35,7 @@ struct HealthResponse {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = CliArgs::parse();
     let config = Config::load(&cli);
 
@@ -52,13 +52,11 @@ async fn main() {
     let storage: Arc<dyn StorageBackend> = match config.storage.backend.as_str() {
         "sqlite" => {
             tracing::info!(path = %config.storage.sqlite_path, "Using SQLite storage backend");
-            Arc::new(SqliteStorage::new(&config.storage.sqlite_path)
-                .expect("Failed to initialize SQLite storage"))
+            Arc::new(SqliteStorage::new(&config.storage.sqlite_path)?)
         }
         "postgres" => {
             tracing::info!(url = %config.storage.postgres_url, "Using PostgreSQL storage backend");
-            Arc::new(PostgresStorage::new(&config.storage.postgres_url)
-                .expect("Failed to initialize PostgreSQL storage"))
+            Arc::new(PostgresStorage::new(&config.storage.postgres_url)?)
         }
         _ => {
             tracing::info!("Using in-memory storage backend");
@@ -148,9 +146,10 @@ async fn main() {
     } else {
         axum::Server::bind(&addr)
             .serve(app.into_make_service())
-            .await
-            .unwrap();
+            .await?;
     }
+
+    Ok(())
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -232,6 +231,17 @@ async fn fql_handler(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(resp))
         }
     }
+}
+
+/// Escape a string value for safe interpolation into FQL single-quoted literals.
+/// Doubles any single quotes to prevent FQL injection.
+fn escape_fql(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Validate that a value contains only safe identifier characters (alphanumeric, underscore, hyphen).
+fn is_safe_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 // --- REST API types ---
@@ -323,6 +333,12 @@ async fn rest_create_account(
     State(exec): State<Arc<StatementExecutor>>,
     Json(req): Json<CreateAccountRequest>,
 ) -> impl IntoResponse {
+    if !is_safe_identifier(&req.id) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid account ID: must be alphanumeric".to_string());
+    }
+    if !is_safe_identifier(&req.account_type) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid account type".to_string());
+    }
     let fql = format!("CREATE ACCOUNT @{} {}", req.id, req.account_type.to_uppercase());
     execute_fql_rest(&exec, &fql).await
 }
@@ -339,6 +355,9 @@ async fn rest_create_rate(
     State(exec): State<Arc<StatementExecutor>>,
     Json(req): Json<CreateRateRequest>,
 ) -> impl IntoResponse {
+    if !is_safe_identifier(&req.id) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid rate ID: must be alphanumeric".to_string());
+    }
     let fql = format!("CREATE RATE {}", req.id);
     execute_fql_rest(&exec, &fql).await
 }
@@ -348,6 +367,15 @@ async fn rest_set_rate(
     Path(id): Path<String>,
     Json(req): Json<SetRateRequest>,
 ) -> impl IntoResponse {
+    if !is_safe_identifier(&id) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid rate ID".to_string());
+    }
+    if !is_safe_identifier(&req.rate) && req.rate.parse::<f64>().is_err() {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid rate value".to_string());
+    }
+    if !is_safe_identifier(&req.date) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid date".to_string());
+    }
     let fql = format!("SET RATE {} {} {}", id, req.rate, req.date);
     execute_fql_rest(&exec, &fql).await
 }
@@ -356,11 +384,31 @@ async fn rest_create_journal(
     State(exec): State<Arc<StatementExecutor>>,
     Json(req): Json<CreateJournalRequest>,
 ) -> impl IntoResponse {
-    let mut fql = format!("CREATE JOURNAL {}, {}, '{}'", req.date, req.amount, req.description);
+    if !is_safe_identifier(&req.date) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid date".to_string());
+    }
+    if req.amount.parse::<rust_decimal::Decimal>().is_err() {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid amount".to_string());
+    }
+    for op in &req.operations {
+        if !is_safe_identifier(&op.account) {
+            return rest_err(StatusCode::BAD_REQUEST, format!("Invalid account ID: {}", op.account));
+        }
+        if !is_safe_identifier(&op.op_type) {
+            return rest_err(StatusCode::BAD_REQUEST, format!("Invalid operation type: {}", op.op_type));
+        }
+    }
+    for k in req.dimensions.keys() {
+        if !is_safe_identifier(k) {
+            return rest_err(StatusCode::BAD_REQUEST, format!("Invalid dimension key: {}", k));
+        }
+    }
+
+    let mut fql = format!("CREATE JOURNAL {}, {}, '{}'", req.date, req.amount, escape_fql(&req.description));
     
     if !req.dimensions.is_empty() {
         let dims: Vec<String> = req.dimensions.iter()
-            .map(|(k, v)| format!("{}='{}'", k, v))
+            .map(|(k, v)| format!("{}='{}'", k, escape_fql(v)))
             .collect();
         fql.push_str(&format!(" FOR {}", dims.join(", ")));
     }
@@ -382,8 +430,16 @@ async fn rest_get_balance(
     Path(id): Path<String>,
     Query(params): Query<BalanceQuery>,
 ) -> impl IntoResponse {
+    if !is_safe_identifier(&id) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid account ID".to_string());
+    }
     let dim = match (&params.dimension_key, &params.dimension_value) {
-        (Some(k), Some(v)) => format!(", {}='{}'", k, v),
+        (Some(k), Some(v)) => {
+            if !is_safe_identifier(k) {
+                return rest_err(StatusCode::BAD_REQUEST, "Invalid dimension key".to_string());
+            }
+            format!(", {}='{}'", k, escape_fql(v))
+        }
         _ => String::new(),
     };
     let fql = format!("GET balance(@{}, {}{}) AS result", id, params.date, dim);
@@ -395,8 +451,16 @@ async fn rest_get_statement(
     Path(id): Path<String>,
     Query(params): Query<StatementQuery>,
 ) -> impl IntoResponse {
+    if !is_safe_identifier(&id) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid account ID".to_string());
+    }
     let dim = match (&params.dimension_key, &params.dimension_value) {
-        (Some(k), Some(v)) => format!(", {}='{}'", k, v),
+        (Some(k), Some(v)) => {
+            if !is_safe_identifier(k) {
+                return rest_err(StatusCode::BAD_REQUEST, "Invalid dimension key".to_string());
+            }
+            format!(", {}='{}'", k, escape_fql(v))
+        }
         _ => String::new(),
     };
     let fql = format!("GET statement(@{}, {}, {}{}) AS result", id, params.from, params.to, dim);

@@ -81,7 +81,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { executeFql, parseTrialBalance, parseStatement, createAccount, type TrialBalanceItem, type StatementTxn } from '../api/client'
+import { executeFql, parseTrialBalance, parseStatement, createAccount, escapeFql, type TrialBalanceItem, type StatementTxn } from '../api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -118,6 +118,8 @@ function formatDate(d: Date): string {
 
 async function loadAccounts() {
   loading.value = true
+  selectedAccount.value = null
+  statement.value = []
   try {
     const today = formatDate(new Date())
     const resp = await executeFql(`GET trial_balance(${today}) AS tb`)
@@ -142,7 +144,7 @@ async function loadStatement() {
   const to = formatDate(stmtTo.value)
   let dim = ''
   if (dimKey.value && dimValue.value) {
-    dim = `, ${dimKey.value}='${dimValue.value}'`
+    dim = `, ${dimKey.value}='${escapeFql(dimValue.value)}'`
   }
   stmtLoading.value = true
   try {

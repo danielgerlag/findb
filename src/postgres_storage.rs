@@ -382,7 +382,7 @@ impl StorageBackend for PostgresStorage {
         }
 
         let balance_date = match from {
-            Bound::Included(d) => d.previous_day().unwrap(),
+            Bound::Included(d) => d.previous_day().unwrap_or(d),
             Bound::Excluded(d) => d,
             Bound::Unbounded => Date::MIN,
         };

@@ -28,7 +28,10 @@ export const useFindbStore = defineStore('findb', () => {
         }
         const scalars = parseScalar(result)
         if (scalars['count']) {
-          accountCount.value = parseInt(scalars['count'], 10)
+          const parsed = parseInt(scalars['count'], 10)
+          if (!isNaN(parsed)) {
+            accountCount.value = parsed
+          }
         }
       }
     } catch (e: any) {
