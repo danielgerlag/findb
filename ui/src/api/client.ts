@@ -23,18 +23,30 @@ export interface StatementTxn {
   balance: string
 }
 
+async function safeJson<T>(res: Response): Promise<T> {
+  const text = await res.text()
+  if (!text) {
+    throw new Error(`Server returned empty response (HTTP ${res.status})`)
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`Server returned non-JSON response (HTTP ${res.status}): ${text.slice(0, 200)}`)
+  }
+}
+
 export async function executeFql(query: string): Promise<FqlResponse> {
   const res = await fetch(`${BASE}/fql`, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: query,
   })
-  return res.json()
+  return safeJson<FqlResponse>(res)
 }
 
 export async function getHealth(): Promise<{ status: string; version: string }> {
   const res = await fetch(`${BASE}/health`)
-  return res.json()
+  return safeJson(res)
 }
 
 // Parse a box-drawing table from FQL output into rows of string arrays.
@@ -100,7 +112,7 @@ export async function createAccount(id: string, accountType: string): Promise<an
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, account_type: accountType }),
   })
-  return res.json()
+  return safeJson(res)
 }
 
 export async function createRate(id: string): Promise<any> {
@@ -109,7 +121,7 @@ export async function createRate(id: string): Promise<any> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
-  return res.json()
+  return safeJson(res)
 }
 
 export async function setRate(id: string, value: string, date: string): Promise<any> {
@@ -118,7 +130,7 @@ export async function setRate(id: string, value: string, date: string): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rate: value, date }),
   })
-  return res.json()
+  return safeJson(res)
 }
 
 export async function createJournal(req: {
@@ -133,5 +145,5 @@ export async function createJournal(req: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   })
-  return res.json()
+  return safeJson(res)
 }
