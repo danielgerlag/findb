@@ -19,10 +19,15 @@
 
     <div v-if="error" class="error-msg">{{ error }}</div>
 
-    <div v-if="results.length > 0" class="card">
+    <div v-if="executed && !error" class="card">
       <h3>Results ({{ metadata.statements_executed }} statements, {{ metadata.journals_created }} journals)</h3>
-      <div v-for="(result, i) in results" :key="i" style="margin-bottom: 1rem;">
-        <pre style="background: #f1f5f9; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem;">{{ result }}</pre>
+      <div v-if="results.length > 0">
+        <div v-for="(result, i) in results" :key="i" style="margin-bottom: 1rem;">
+          <pre style="background: #f1f5f9; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem;">{{ result }}</pre>
+        </div>
+      </div>
+      <div v-else class="success-msg">
+        ✓ Executed {{ metadata.statements_executed }} statement{{ metadata.statements_executed !== 1 ? 's' : '' }} successfully<span v-if="metadata.journals_created > 0"> — {{ metadata.journals_created }} journal{{ metadata.journals_created !== 1 ? 's' : '' }} created</span>
       </div>
     </div>
 
@@ -46,6 +51,7 @@ const query = ref('')
 const results = ref<string[]>([])
 const error = ref<string | null>(null)
 const loading = ref(false)
+const executed = ref(false)
 const metadata = ref({ statements_executed: 0, journals_created: 0 })
 const history = ref<string[]>([])
 
@@ -58,13 +64,15 @@ async function executeQuery() {
   if (!query.value.trim()) return
   loading.value = true
   error.value = null
+  executed.value = false
   results.value = []
 
   try {
     const resp = await executeFql(query.value)
     metadata.value = resp.metadata
     if (resp.success) {
-      results.value = resp.results
+      results.value = (resp.results || []).filter((r) => r.trim().length > 0)
+      executed.value = true
     } else {
       error.value = resp.error || 'Unknown error'
     }
@@ -84,5 +92,6 @@ async function executeQuery() {
 function clearResults() {
   results.value = []
   error.value = null
+  executed.value = false
 }
 </script>
