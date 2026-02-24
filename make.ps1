@@ -106,14 +106,14 @@ function Target-Demo {
     $backend = $null
     $frontend = $null
     try {
-        $backend = Start-Process -FilePath "cargo" `
-            -ArgumentList "run","--","--port",$Port `
+        $backend = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c","cargo","run","--","--port",$Port `
             -WorkingDirectory $Root `
             -PassThru -NoNewWindow
         Start-Sleep -Seconds 3
 
-        $frontend = Start-Process -FilePath "npm" `
-            -ArgumentList "run","dev" `
+        $frontend = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c","npm","run","dev" `
             -WorkingDirectory "$Root\ui" `
             -PassThru -NoNewWindow
 
@@ -141,8 +141,9 @@ function Target-Demo {
             Write-Host "Stopping frontend..." -ForegroundColor Gray
             Stop-Process -Id $frontend.Id -Force -ErrorAction SilentlyContinue
         }
-        # Also kill any lingering node/cargo child processes on the ports
-        Get-Process -Name "findb" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # Kill child processes (findb.exe spawned by cargo run)
+        $findbProcs = Get-Process -Name "findb" -ErrorAction SilentlyContinue
+        foreach ($p in $findbProcs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
     }
 }
 
