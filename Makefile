@@ -1,67 +1,84 @@
-.PHONY: build build-release build-ui test test-all lint fmt check clean \
-       run run-ui demo docker help
+.PHONY: build build-release build-ui build-all test test-all lint fmt fmt-check \
+       check run run-release run-ui demo docker docker-run bench clean help
+
+FINDB_PORT ?= 3001
 
 # Default target
-help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+help: ## Show available targets
+	@echo Available targets:
+	@echo   build          Build the Rust backend (debug)
+	@echo   build-release  Build the Rust backend (release)
+	@echo   build-ui       Build the web UI for production
+	@echo   build-all      Build both backend and UI
+	@echo   test           Run Rust tests
+	@echo   test-all       Run all tests including Postgres
+	@echo   lint           Run clippy linter
+	@echo   fmt            Format Rust code
+	@echo   fmt-check      Check Rust code formatting
+	@echo   check          Run fmt-check + lint + test
+	@echo   run            Run findb server (debug)
+	@echo   run-release    Run findb server (release)
+	@echo   run-ui         Start the Vite dev server
+	@echo   demo           Build and run backend + UI (Unix only; use make.ps1 on Windows)
+	@echo   docker         Build Docker image
+	@echo   docker-run     Build and run Docker container
+	@echo   bench          Run benchmarks
+	@echo   clean          Remove build artifacts
 
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
 
-build: ## Build the Rust backend (debug)
+build:
 	cargo build
 
-build-release: ## Build the Rust backend (release, optimized)
+build-release:
 	cargo build --release
 
-build-ui: ## Build the web UI for production
+build-ui:
 	cd ui && npm install && npm run build
 
-build-all: build build-ui ## Build both backend and UI
+build-all: build build-ui
 
 # ---------------------------------------------------------------------------
 # Test & Lint
 # ---------------------------------------------------------------------------
 
-test: ## Run Rust tests (excludes ignored/Postgres tests)
+test:
 	cargo test
 
-test-all: ## Run all Rust tests including Postgres (requires Docker)
+test-all:
 	cargo test -- --include-ignored
 
-lint: ## Run clippy linter with strict warnings
+lint:
 	cargo clippy --all-targets -- -D warnings
 
-fmt: ## Format Rust code
+fmt:
 	cargo fmt --all
 
-fmt-check: ## Check Rust code formatting
+fmt-check:
 	cargo fmt --all -- --check
 
-check: fmt-check lint test ## Run all checks (format, lint, test)
+check: fmt-check lint test
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
-FINDB_PORT ?= 3001
-
-run: ## Run the findb server (debug build, port=$(FINDB_PORT))
+run:
 	cargo run -- --port $(FINDB_PORT)
 
-run-release: ## Run the findb server (release build, port=$(FINDB_PORT))
+run-release:
 	cargo run --release -- --port $(FINDB_PORT)
 
-run-ui: ## Start the Vite dev server for the UI
-	cd ui && npm install && FINDB_API_URL=http://localhost:$(FINDB_PORT) npm run dev
+run-ui:
+	cd ui && npm run dev
 
 # ---------------------------------------------------------------------------
-# Demo — builds and runs everything
+# Demo (Unix only — use ./make.ps1 demo on Windows)
 # ---------------------------------------------------------------------------
 
-demo: build build-ui ## Build everything, then run backend + UI together
+demo: build build-ui
 	@echo ""
 	@echo "============================================"
 	@echo "  Starting FinanceDB demo"
@@ -72,26 +89,25 @@ demo: build build-ui ## Build everything, then run backend + UI together
 	@echo ""
 	@trap 'kill 0' EXIT; \
 		cargo run -- --port $(FINDB_PORT) & \
-		sleep 2 && cd ui && FINDB_API_URL=http://localhost:$(FINDB_PORT) npm run dev & \
+		sleep 2 && cd ui && npm run dev & \
 		wait
 
 # ---------------------------------------------------------------------------
 # Docker
 # ---------------------------------------------------------------------------
 
-docker: ## Build Docker image
+docker:
 	docker build -t findb:latest .
 
-docker-run: docker ## Build and run Docker container
+docker-run: docker
 	docker run --rm -p $(FINDB_PORT):3000 findb:latest
 
 # ---------------------------------------------------------------------------
 # Bench & Clean
 # ---------------------------------------------------------------------------
 
-bench: ## Run benchmarks
+bench:
 	cargo bench
 
-clean: ## Remove build artifacts
+clean:
 	cargo clean
-	rm -rf ui/node_modules ui/dist
