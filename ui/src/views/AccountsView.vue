@@ -46,10 +46,10 @@
           <label>Dimension Value</label>
           <InputText v-model="dimValue" placeholder="e.g. Acme" />
         </div>
-        <Button label="Load Statement" icon="pi pi-search" @click="loadStatement" />
+        <Button label="Load Statement" icon="pi pi-search" @click="loadStatement" :loading="stmtLoading" />
       </div>
 
-      <DataTable :value="statement" stripedRows size="small" v-if="statement.length > 0">
+      <DataTable :value="statement" stripedRows size="small" v-if="statement.length > 0 || stmtLoading" :loading="stmtLoading">
         <Column field="date" header="Date" />
         <Column field="description" header="Description" />
         <Column field="amount" header="Amount">
@@ -96,11 +96,12 @@ const accounts = ref<TrialBalanceItem[]>([])
 const loading = ref(false)
 const selectedAccount = ref<TrialBalanceItem | null>(null)
 const statement = ref<StatementTxn[]>([])
+const stmtLoading = ref(false)
 const showCreate = ref(false)
 const newId = ref('')
 const newType = ref('ASSET')
 const accountTypes = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']
-const stmtFrom = ref(new Date(new Date().getFullYear(), 0, 1))
+const stmtFrom = ref(new Date(new Date().getFullYear() - 2, 0, 1))
 const stmtTo = ref(new Date())
 const dimKey = ref('')
 const dimValue = ref('')
@@ -143,6 +144,7 @@ async function loadStatement() {
   if (dimKey.value && dimValue.value) {
     dim = `, ${dimKey.value}='${dimValue.value}'`
   }
+  stmtLoading.value = true
   try {
     const resp = await executeFql(`GET statement(@${id}, ${from}, ${to}${dim}) AS stmt`)
     if (resp.success && resp.results.length > 0 && resp.results[0]) {
@@ -155,6 +157,8 @@ async function loadStatement() {
     }
   } catch (e: any) {
     toast.add({ severity: 'error', summary: 'Failed to load statement', detail: e.message, life: 5000 })
+  } finally {
+    stmtLoading.value = false
   }
 }
 

@@ -132,6 +132,8 @@ async function submit() {
     if (resp.success) {
       success.value = true
       toast.add({ severity: 'success', summary: 'Journal created', detail: `${resp.metadata.journals_created} journal(s) created`, life: 3000 })
+      reset()
+      success.value = true
     } else {
       error.value = resp.error || 'Unknown error'
       toast.add({ severity: 'error', summary: 'Journal error', detail: resp.error || 'Unknown error', life: 5000 })
