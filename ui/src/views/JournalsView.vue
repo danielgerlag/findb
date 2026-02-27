@@ -77,6 +77,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { executeFql, escapeFql } from '../api/client'
+import { useEntityStore } from '../stores/entity'
 import { highlightFqlLines } from '../lib/fql-highlight'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
@@ -85,6 +86,7 @@ import DatePicker from 'primevue/datepicker'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
+const entityStore = useEntityStore()
 const journalDate = ref(new Date())
 const amount = ref('')
 const description = ref('')
@@ -131,7 +133,7 @@ async function submit() {
   success.value = false
 
   try {
-    const resp = await executeFql(fqlPreview.value)
+    const resp = await executeFql(fqlPreview.value, entityStore.activeEntity)
     if (resp.success) {
       success.value = true
       toast.add({ severity: 'success', summary: 'Journal created', detail: `${resp.metadata.journals_created} journal(s) created`, life: 3000 })

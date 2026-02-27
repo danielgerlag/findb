@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { executeFql, parseTrialBalance, parseScalar, type TrialBalanceItem } from '../api/client'
+import { useEntityStore } from './entity'
 
 export const useDblEntryStore = defineStore('dblentry', () => {
   const trialBalance = ref<TrialBalanceItem[]>([])
@@ -13,9 +14,11 @@ export const useDblEntryStore = defineStore('dblentry', () => {
     loading.value = true
     error.value = null
     try {
+      const entityStore = useEntityStore()
       const date = effectiveDate.value
       const resp = await executeFql(
-        `GET trial_balance(${date}) AS tb, account_count() AS count`
+        `GET trial_balance(${date}) AS tb, account_count() AS count`,
+        entityStore.activeEntity
       )
       if (!resp.success) {
         error.value = resp.error || 'Unknown error'

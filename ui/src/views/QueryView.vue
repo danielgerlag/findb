@@ -48,11 +48,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { executeFql } from '../api/client'
+import { useEntityStore } from '../stores/entity'
 import { highlightFqlLines } from '../lib/fql-highlight'
 import Button from 'primevue/button'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
+const entityStore = useEntityStore()
 const query = ref('')
 const results = ref<string[]>([])
 const error = ref<string | null>(null)
@@ -85,7 +87,7 @@ async function executeQuery() {
   results.value = []
 
   try {
-    const resp = await executeFql(query.value)
+    const resp = await executeFql(query.value, entityStore.activeEntity)
     metadata.value = resp.metadata
     if (resp.success) {
       results.value = (resp.results || []).filter((r) => r.trim().length > 0)

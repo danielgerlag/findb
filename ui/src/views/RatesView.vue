@@ -65,12 +65,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { executeFql, escapeFql } from '../api/client'
+import { useEntityStore } from '../stores/entity'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import DatePicker from 'primevue/datepicker'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
+const entityStore = useEntityStore()
 const newRateId = ref('')
 const createMsg = ref('')
 const setRateId = ref('')
@@ -88,7 +90,7 @@ function formatDate(d: Date): string {
 async function doCreateRate() {
   if (!newRateId.value) return
   try {
-    const resp = await executeFql(`CREATE RATE ${newRateId.value};`)
+    const resp = await executeFql(`CREATE RATE ${newRateId.value};`, entityStore.activeEntity)
     createMsg.value = resp.success ? `✓ Rate "${newRateId.value}" created` : resp.error || 'Error'
     if (resp.success) toast.add({ severity: 'success', summary: 'Rate created', detail: newRateId.value, life: 3000 })
   } catch (e: any) {
@@ -101,7 +103,7 @@ async function doSetRate() {
   if (!setRateId.value || !setRateValue.value) return
   const date = formatDate(setRateDate.value)
   try {
-    const resp = await executeFql(`SET RATE ${setRateId.value} ${setRateValue.value} ${date};`)
+    const resp = await executeFql(`SET RATE ${setRateId.value} ${setRateValue.value} ${date};`, entityStore.activeEntity)
     setMsg.value = resp.success ? `✓ Rate set: ${setRateId.value} = ${setRateValue.value} on ${date}` : resp.error || 'Error'
     if (resp.success) toast.add({ severity: 'success', summary: 'Rate updated', detail: `${setRateId.value} = ${setRateValue.value}`, life: 3000 })
   } catch (e: any) {
@@ -114,7 +116,7 @@ async function doLookup() {
   if (!lookupId.value) return
   const date = formatDate(lookupDate.value)
   try {
-    const resp = await executeFql(`GET fx_rate('${escapeFql(lookupId.value)}', ${date}) AS rate`)
+    const resp = await executeFql(`GET fx_rate('${escapeFql(lookupId.value)}', ${date}) AS rate`, entityStore.activeEntity)
     if (resp.success && resp.results.length > 0) {
       const resultText = resp.results[0] ?? ''
       const match = resultText.match(/rate:\s*(.+)/)

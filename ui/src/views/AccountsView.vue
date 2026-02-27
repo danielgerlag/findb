@@ -81,7 +81,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { executeFql, parseTrialBalance, parseStatement, createAccount, escapeFql, type TrialBalanceItem, type StatementTxn } from '../api/client'
+import { executeFql, parseTrialBalance, parseStatement, escapeFql, type TrialBalanceItem, type StatementTxn } from '../api/client'
+import { useEntityStore } from '../stores/entity'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -92,6 +93,7 @@ import DatePicker from 'primevue/datepicker'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
+const entityStore = useEntityStore()
 const accounts = ref<TrialBalanceItem[]>([])
 const loading = ref(false)
 const selectedAccount = ref<TrialBalanceItem | null>(null)
@@ -122,7 +124,7 @@ async function loadAccounts() {
   statement.value = []
   try {
     const today = formatDate(new Date())
-    const resp = await executeFql(`GET trial_balance(${today}) AS tb`)
+    const resp = await executeFql(`GET trial_balance(${today}) AS tb`, entityStore.activeEntity)
     if (resp.success && resp.results.length > 0 && resp.results[0]) {
       accounts.value = parseTrialBalance(resp.results[0])
     }
@@ -148,7 +150,7 @@ async function loadStatement() {
   }
   stmtLoading.value = true
   try {
-    const resp = await executeFql(`GET statement(@${id}, ${from}, ${to}${dim}) AS stmt`)
+    const resp = await executeFql(`GET statement(@${id}, ${from}, ${to}${dim}) AS stmt`, entityStore.activeEntity)
     if (resp.success && resp.results.length > 0 && resp.results[0]) {
       statement.value = parseStatement(resp.results[0])
       if (statement.value.length === 0) {
@@ -167,7 +169,7 @@ async function loadStatement() {
 async function doCreate() {
   if (!newId.value) return
   try {
-    await createAccount(newId.value, newType.value)
+    await executeFql(`CREATE ACCOUNT @${newId.value} ${newType.value};`, entityStore.activeEntity)
     toast.add({ severity: 'success', summary: 'Account created', detail: `@${newId.value} (${newType.value})`, life: 3000 })
     showCreate.value = false
     newId.value = ''

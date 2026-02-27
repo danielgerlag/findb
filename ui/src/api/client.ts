@@ -48,11 +48,15 @@ async function safeJson<T>(res: Response): Promise<T> {
   }
 }
 
-export async function executeFql(query: string): Promise<FqlResponse> {
+export async function executeFql(query: string, entityId?: string): Promise<FqlResponse> {
+  let body = query
+  if (entityId && entityId !== 'default') {
+    body = `USE ENTITY '${escapeFql(entityId)}';\n${query}`
+  }
   const res = await fetch(`${BASE}/fql`, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body: query,
+    body,
   })
   return safeJson<FqlResponse>(res)
 }

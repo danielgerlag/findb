@@ -55,14 +55,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useDblEntryStore } from '../stores/dblentry'
+import { useEntityStore } from '../stores/entity'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import DatePicker from 'primevue/datepicker'
 import Chart from 'primevue/chart'
 
 const store = useDblEntryStore()
+const entityStore = useEntityStore()
 const dateModel = ref(new Date())
 
 function formatMoney(val: string) {
@@ -117,4 +119,7 @@ const chartOptions = {
 }
 
 onMounted(() => store.fetchDashboard())
+
+// Re-fetch when entity changes
+watch(() => entityStore.activeEntity, () => store.fetchDashboard())
 </script>
