@@ -114,6 +114,10 @@ function maybeAutoExecute() {
   executeCurrentStep()
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function executeCurrentStep() {
   const step = props.tour.steps[currentStep.value]
   if (!step || !step.code.trim()) {
@@ -123,6 +127,9 @@ async function executeCurrentStep() {
 
   stepState.value = 'executing'
   stepError.value = null
+
+  // Brief pause so the user sees the spinner before results appear
+  await delay(800)
 
   try {
     // Scope all FQL execution to the selected entity
