@@ -20,16 +20,24 @@
       </div>
     </div>
 
-    <TourPlayer v-else-if="tour" :tour="tour" />
+    <EntityPicker
+      v-if="showEntityPicker && tour"
+      :suggested-name="suggestedEntityName"
+      @select="onEntitySelected"
+      @cancel="cancelEntityPicker"
+    />
+
+    <TourPlayer v-else-if="tour && entityId" :tour="tour" :entity-id="entityId" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { parseTour } from '../lib/fqlt'
 import type { Tour } from '../lib/fqlt'
 import TourPlayer from '../components/tour/TourPlayer.vue'
+import EntityPicker from '../components/tour/EntityPicker.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +46,13 @@ const tour = ref<Tour | null>(null)
 const tourFile = ref<string | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
+const showEntityPicker = ref(false)
+const entityId = ref<string | null>(null)
+
+const suggestedEntityName = computed(() => {
+  const title = tour.value?.meta.title || tourFile.value || 'Tour'
+  return title.replace(/[^a-zA-Z0-9 _-]/g, '').trim()
+})
 
 onMounted(() => {
   const file = route.query.file as string | undefined
@@ -49,6 +64,7 @@ async function loadTour(name: string) {
   loading.value = true
   error.value = null
   tour.value = null
+  entityId.value = null
 
   try {
     const res = await fetch(`/tours/${name}.fqlt`)
@@ -56,11 +72,25 @@ async function loadTour(name: string) {
     const source = await res.text()
     tour.value = parseTour(source)
     router.replace({ query: { file: name } })
+    showEntityPicker.value = true
   } catch (e: any) {
     error.value = e.message
   } finally {
     loading.value = false
   }
+}
+
+function onEntitySelected(id: string) {
+  entityId.value = id
+  showEntityPicker.value = false
+}
+
+function cancelEntityPicker() {
+  showEntityPicker.value = false
+  tour.value = null
+  tourFile.value = null
+  entityId.value = null
+  router.replace({ query: {} })
 }
 </script>
 

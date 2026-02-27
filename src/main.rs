@@ -14,6 +14,11 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Serialize, Deserialize};
 use tracing_subscriber::{fmt, EnvFilter};
 
+#[derive(Deserialize)]
+struct CreateEntityRestRequest {
+    name: String,
+}
+
 #[derive(Serialize)]
 struct FqlResponse {
     success: bool,
@@ -86,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage.clone());
     let state = Arc::new(exec);
+    let app_storage = storage.clone();
     
     let auth_config = Arc::new(config.auth.clone());
 
@@ -99,6 +105,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/rates/:id", post(rest_set_rate))
         .route("/api/journals", post(rest_create_journal))
         .route("/api/trial-balance", get(rest_trial_balance))
+        .route("/api/entities", get({
+            let s = app_storage.clone();
+            move || {
+                let entities: Vec<String> = s.list_entities().iter().map(|e| e.to_string()).collect();
+                std::future::ready(Json(entities))
+            }
+        }).post({
+            let s = app_storage.clone();
+            move |Json(req): Json<CreateEntityRestRequest>| {
+                let result = s.create_entity(&req.name);
+                std::future::ready(match result {
+                    Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({"success": true}))),
+                    Err(e) => (StatusCode::CONFLICT, Json(serde_json::json!({"success": false, "error": e.to_string()}))),
+                })
+            }
+        }))
         .route("/", post(fql_handler))
         .with_state(state.clone())
         .layer(middleware::from_fn(auth_middleware))

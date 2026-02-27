@@ -12,7 +12,6 @@
           placeholder="Enter FQL statements...&#10;&#10;Examples:&#10;  CREATE ACCOUNT @bank ASSET;&#10;  GET balance(@bank, 2023-12-31) AS result;&#10;  GET trial_balance(2023-12-31) AS tb;"
           @keydown.ctrl.enter="executeQuery"
           @scroll="syncScroll"
-          ref="textareaEl"
           spellcheck="false"
         ></textarea>
       </div>
@@ -61,7 +60,6 @@ const loading = ref(false)
 const executed = ref(false)
 const metadata = ref({ statements_executed: 0, journals_created: 0 })
 const history = ref<string[]>([])
-const textareaEl = ref<HTMLTextAreaElement | null>(null)
 
 const highlightedLines = computed(() => highlightFqlLines(query.value))
 

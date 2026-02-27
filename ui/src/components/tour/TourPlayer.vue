@@ -46,7 +46,7 @@ import TourProgress from './TourProgress.vue'
 import TourStepView from './TourStepView.vue'
 import Button from 'primevue/button'
 
-const props = defineProps<{ tour: Tour }>()
+const props = defineProps<{ tour: Tour; entityId: string }>()
 
 const playerEl = ref<HTMLElement | null>(null)
 const currentStep = ref(0)
@@ -125,7 +125,10 @@ async function executeCurrentStep() {
   stepError.value = null
 
   try {
-    const resp = await executeFql(step.code)
+    // Scope all FQL execution to the selected entity
+    const entityEscaped = props.entityId.replace(/'/g, "''")
+    const scopedCode = `USE ENTITY '${entityEscaped}';\n${step.code}`
+    const resp = await executeFql(scopedCode)
     results.value.set(currentStep.value, resp)
     if (resp.success) {
       stepState.value = 'result'
