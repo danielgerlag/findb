@@ -104,24 +104,25 @@ const assertResults = computed(() => {
   position: absolute;
   top: 1rem;
   right: 1rem;
-  background: rgba(15, 23, 42, 0.9);
+  background: rgba(255, 255, 255, 0.95);
   padding: 1rem;
   border-radius: 8px;
   max-width: 320px;
   z-index: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 .layout-full-code { position: relative; }
 
 .run-prompt { margin-bottom: 1rem; }
 .executing {
-  color: #94a3b8;
+  color: #64748b;
   margin-bottom: 1rem;
   font-size: 0.9rem;
 }
 .step-error {
-  background: #3b1111;
-  border: 1px solid #dc2626;
-  color: #fca5a5;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
   padding: 0.75rem 1rem;
   border-radius: 6px;
   margin-bottom: 1rem;
@@ -129,16 +130,17 @@ const assertResults = computed(() => {
 .error-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 .step-results { margin-bottom: 1rem; }
 .result-block pre {
-  background: #1e293b;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   padding: 0.75rem;
   border-radius: 6px;
   overflow-x: auto;
   font-size: 0.85rem;
-  color: #e2e8f0;
+  color: #1e293b;
   margin-bottom: 0.5rem;
 }
 .step-expect {
-  color: #4ade80;
+  color: #16a34a;
   font-size: 0.9rem;
   margin-bottom: 1rem;
 }
@@ -148,7 +150,7 @@ const assertResults = computed(() => {
   font-size: 0.85rem;
   padding: 0.25rem 0;
 }
-.assert-item.passed { color: #4ade80; }
-.assert-item.failed { color: #f87171; }
+.assert-item.passed { color: #16a34a; }
+.assert-item.failed { color: #dc2626; }
 .assert-item .pi { margin-right: 0.5rem; }
 </style>

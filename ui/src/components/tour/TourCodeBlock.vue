@@ -101,7 +101,7 @@ watch(() => props.code, () => {
 
 <style scoped>
 .tour-code-block {
-  background: #0f172a;
+  background: #1e293b;
   border: 1px solid #334155;
   border-radius: 8px;
   overflow-x: auto;
@@ -114,7 +114,7 @@ pre {
   font-size: 0.875rem;
   line-height: 1.6;
 }
-code { color: #e2e8f0; }
+code { color: #f1f5f9; }
 .code-line { display: block; }
 .code-line.dimmed { opacity: 0.3; }
 .line-num {
@@ -122,12 +122,12 @@ code { color: #e2e8f0; }
   width: 2.5em;
   text-align: right;
   margin-right: 1em;
-  color: #475569;
+  color: #64748b;
   user-select: none;
 }
 :deep(.fqlt-highlight) {
-  background: rgba(250, 204, 21, 0.25);
-  color: #fde047;
+  background: rgba(250, 204, 21, 0.3);
+  color: #fbbf24;
   padding: 0.1em 0.2em;
   border-radius: 3px;
 }

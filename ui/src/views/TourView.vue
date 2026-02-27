@@ -66,12 +66,12 @@ async function loadTour(name: string) {
 
 <style scoped>
 .tour-description {
-  color: #94a3b8;
+  color: #64748b;
   margin-top: 0.25rem;
   font-size: 0.95rem;
 }
 .loading {
-  color: #94a3b8;
+  color: #64748b;
   padding: 2rem;
   text-align: center;
 }
@@ -80,20 +80,20 @@ async function loadTour(name: string) {
   gap: 1rem;
 }
 .tour-card {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
   padding: 1.25rem;
   cursor: pointer;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.tour-card:hover { border-color: #3b82f6; }
-.tour-card h4 { margin: 0 0 0.5rem; font-size: 1.1rem; }
-.tour-card p { color: #94a3b8; font-size: 0.9rem; margin: 0 0 0.75rem; }
+.tour-card:hover { border-color: #3b82f6; box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15); }
+.tour-card h4 { margin: 0 0 0.5rem; font-size: 1.1rem; color: #1e293b; }
+.tour-card p { color: #64748b; font-size: 0.9rem; margin: 0 0 0.75rem; }
 .tour-tag {
   display: inline-block;
-  background: #334155;
-  color: #94a3b8;
+  background: #e2e8f0;
+  color: #475569;
   padding: 0.2em 0.6em;
   border-radius: 4px;
   font-size: 0.75rem;
