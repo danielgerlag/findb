@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package findb.v1;
+package dblentry.v1;
 
-// FinanceDB gRPC service
-service FinanceDb {
+// DblEntry gRPC service
+service DblEntry {
   // Execute raw FQL statements
   rpc ExecuteFql(ExecuteFqlRequest) returns (ExecuteFqlResponse);
 

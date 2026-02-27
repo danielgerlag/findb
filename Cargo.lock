@@ -503,6 +503,72 @@ dependencies = [
 ]
 
 [[package]]
+name = "dblentry"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "criterion",
+ "dblentry-core",
+ "dblentry-postgres",
+ "dblentry-sqlite",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "peg",
+ "postgres",
+ "prettytable-rs",
+ "prost",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "subtle",
+ "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "dblentry-core"
+version = "0.1.0"
+dependencies = [
+ "prettytable-rs",
+ "rust_decimal",
+ "thiserror",
+ "time",
+]
+
+[[package]]
+name = "dblentry-postgres"
+version = "0.1.0"
+dependencies = [
+ "dblentry-core",
+ "postgres",
+ "rust_decimal",
+ "time",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "dblentry-sqlite"
+version = "0.1.0"
+dependencies = [
+ "dblentry-core",
+ "rusqlite",
+ "rust_decimal",
+ "time",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -585,72 +651,6 @@ name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
-
-[[package]]
-name = "findb"
-version = "0.1.0"
-dependencies = [
- "axum",
- "clap",
- "criterion",
- "findb-core",
- "findb-postgres",
- "findb-sqlite",
- "metrics",
- "metrics-exporter-prometheus",
- "peg",
- "postgres",
- "prettytable-rs",
- "prost",
- "rust_decimal",
- "rust_decimal_macros",
- "serde",
- "serde_json",
- "subtle",
- "thiserror",
- "time",
- "tokio",
- "toml",
- "tonic",
- "tonic-build",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "findb-core"
-version = "0.1.0"
-dependencies = [
- "prettytable-rs",
- "rust_decimal",
- "thiserror",
- "time",
-]
-
-[[package]]
-name = "findb-postgres"
-version = "0.1.0"
-dependencies = [
- "findb-core",
- "postgres",
- "rust_decimal",
- "time",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "findb-sqlite"
-version = "0.1.0"
-dependencies = [
- "findb-core",
- "rusqlite",
- "rust_decimal",
- "time",
- "tracing",
- "uuid",
-]
 
 [[package]]
 name = "fixedbitset"

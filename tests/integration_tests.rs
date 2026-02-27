@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use findb::evaluator::{ExpressionEvaluator, QueryVariables};
-use findb::function_registry::{FunctionRegistry, Function};
-use findb::functions::{Balance, Statement, TrialBalance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max};
-use findb::lexer;
-use findb::models::DataValue;
-use findb::statement_executor::{ExecutionContext, StatementExecutor};
-use findb::storage::InMemoryStorage;
+use dblentry::evaluator::{ExpressionEvaluator, QueryVariables};
+use dblentry::function_registry::{FunctionRegistry, Function};
+use dblentry::functions::{Balance, Statement, TrialBalance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max};
+use dblentry::lexer;
+use dblentry::models::DataValue;
+use dblentry::statement_executor::{ExecutionContext, StatementExecutor};
+use dblentry::storage::InMemoryStorage;
 
-fn register_functions(registry: &FunctionRegistry, storage: &Arc<dyn findb::storage::StorageBackend>) {
+fn register_functions(registry: &FunctionRegistry, storage: &Arc<dyn dblentry::storage::StorageBackend>) {
     registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
     registry.register_function("trial_balance", Function::Scalar(Arc::new(TrialBalance::new(storage.clone()))));
@@ -23,7 +23,7 @@ fn register_functions(registry: &FunctionRegistry, storage: &Arc<dyn findb::stor
 }
 
 fn setup() -> (StatementExecutor, ExecutionContext) {
-    let storage: Arc<dyn findb::storage::StorageBackend> = Arc::new(InMemoryStorage::new());
+    let storage: Arc<dyn dblentry::storage::StorageBackend> = Arc::new(InMemoryStorage::new());
     let function_registry = FunctionRegistry::new();
     register_functions(&function_registry, &storage);
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
@@ -33,7 +33,7 @@ fn setup() -> (StatementExecutor, ExecutionContext) {
     (exec, context)
 }
 
-fn execute_script(exec: &StatementExecutor, context: &mut ExecutionContext, script: &str) -> Vec<findb::statement_executor::ExecutionResult> {
+fn execute_script(exec: &StatementExecutor, context: &mut ExecutionContext, script: &str) -> Vec<dblentry::statement_executor::ExecutionResult> {
     let statements = lexer::parse(script).expect("Failed to parse script");
     let mut results = Vec::new();
     for statement in &statements {
@@ -176,7 +176,7 @@ fn test_trial_balance_balances() {
             let mut total_credit = rust_decimal::Decimal::ZERO;
             for item in items {
                 match item.account_type {
-                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                    dblentry::ast::AccountType::Asset | dblentry::ast::AccountType::Expense => {
                         total_debit += item.balance;
                     },
                     _ => {
@@ -280,7 +280,7 @@ fn test_lending_fund_e2e() {
             let mut total_credit = rust_decimal::Decimal::ZERO;
             for item in items {
                 match item.account_type {
-                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                    dblentry::ast::AccountType::Asset | dblentry::ast::AccountType::Expense => {
                         total_debit += item.balance;
                     },
                     _ => {
@@ -1230,7 +1230,7 @@ fn assert_trial_balance_balanced(tb_val: &DataValue, label: &str) {
             let mut total_credit = rust_decimal::Decimal::ZERO;
             for item in items {
                 match item.account_type {
-                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                    dblentry::ast::AccountType::Asset | dblentry::ast::AccountType::Expense => {
                         total_debit += item.balance;
                     },
                     _ => {
@@ -1247,8 +1247,8 @@ fn assert_trial_balance_balanced(tb_val: &DataValue, label: &str) {
 // --- SQLite backend tests ---
 
 fn setup_sqlite() -> (StatementExecutor, ExecutionContext) {
-    use findb_sqlite::SqliteStorage;
-    let storage: Arc<dyn findb::storage::StorageBackend> = Arc::new(SqliteStorage::new(":memory:").unwrap());
+    use dblentry_sqlite::SqliteStorage;
+    let storage: Arc<dyn dblentry::storage::StorageBackend> = Arc::new(SqliteStorage::new(":memory:").unwrap());
     let function_registry = FunctionRegistry::new();
     register_functions(&function_registry, &storage);
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
@@ -1317,7 +1317,7 @@ fn test_sqlite_lending_fund_e2e() {
             let mut total_credit = rust_decimal::Decimal::ZERO;
             for item in items {
                 match item.account_type {
-                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                    dblentry::ast::AccountType::Asset | dblentry::ast::AccountType::Expense => {
                         total_debit += item.balance;
                     },
                     _ => {
@@ -1361,12 +1361,12 @@ fn test_sqlite_implicit_transaction_rollback() {
 // --- PostgreSQL backend tests ---
 
 fn pg_connection_string() -> String {
-    std::env::var("FINDB_TEST_POSTGRES_URL")
-        .unwrap_or_else(|_| "host=localhost user=findb password=findb dbname=findb".to_string())
+    std::env::var("DBLENTRY_TEST_POSTGRES_URL")
+        .unwrap_or_else(|_| "host=localhost user=dblentry password=dblentry dbname=dblentry".to_string())
 }
 
 fn setup_postgres() -> (StatementExecutor, ExecutionContext) {
-    use findb_postgres::PostgresStorage;
+    use dblentry_postgres::PostgresStorage;
 
     // Drop all tables first to ensure a clean slate
     let conn_str = pg_connection_string();
@@ -1385,7 +1385,7 @@ fn setup_postgres() -> (StatementExecutor, ExecutionContext) {
         .expect("Failed to clean up PostgreSQL tables");
     drop(client);
 
-    let storage: Arc<dyn findb::storage::StorageBackend> =
+    let storage: Arc<dyn dblentry::storage::StorageBackend> =
         Arc::new(PostgresStorage::new(&conn_str).expect("Failed to create PostgresStorage"));
     let function_registry = FunctionRegistry::new();
     register_functions(&function_registry, &storage);
@@ -1475,7 +1475,7 @@ fn test_postgres_lending_fund_e2e() {
             let mut total_credit = rust_decimal::Decimal::ZERO;
             for item in items {
                 match item.account_type {
-                    findb::ast::AccountType::Asset | findb::ast::AccountType::Expense => {
+                    dblentry::ast::AccountType::Asset | dblentry::ast::AccountType::Expense => {
                         total_debit += item.balance;
                     }
                     _ => {

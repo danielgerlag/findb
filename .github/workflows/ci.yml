@@ -40,4 +40,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
-        run: docker build -t findb:${{ github.sha }} .
+        run: docker build -t dblentry:${{ github.sha }} .

@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use axum::{Router, routing::{post, get}, extract::{State, Path, Query}, response::IntoResponse, http::StatusCode, Json, middleware, Extension};
 use clap::Parser;
-use findb::grpc::{pb::finance_db_server::FinanceDbServer, FinanceDbService};
-use findb::auth::auth_middleware;
-use findb::config::{CliArgs, Config};
-use findb::functions::{Statement, TrialBalance};
-use findb::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max}, lexer};
-use findb_sqlite::SqliteStorage;
-use findb_postgres::PostgresStorage;
+use dblentry::grpc::{pb::dbl_entry_server::DblEntryServer, DblEntryService};
+use dblentry::auth::auth_middleware;
+use dblentry::config::{CliArgs, Config};
+use dblentry::functions::{Statement, TrialBalance};
+use dblentry::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max}, lexer};
+use dblentry_sqlite::SqliteStorage;
+use dblentry_postgres::PostgresStorage;
 use metrics::{counter, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Serialize, Deserialize};
@@ -116,17 +116,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = public.merge(protected);
 
     let addr = config.listen_addr();
-    tracing::info!("FinanceDB HTTP listening on {}", addr);
+    tracing::info!("DblEntry HTTP listening on {}", addr);
 
     if config.grpc.enabled {
         let grpc_addr = format!("{}:{}", config.server.host, config.grpc.port)
             .parse()
             .expect("Invalid gRPC listen address");
-        let grpc_service = FinanceDbService::new(state.clone());
-        tracing::info!("FinanceDB gRPC listening on {}", grpc_addr);
+        let grpc_service = DblEntryService::new(state.clone());
+        tracing::info!("DblEntry gRPC listening on {}", grpc_addr);
 
         let grpc_server = tonic::transport::Server::builder()
-            .add_service(FinanceDbServer::new(grpc_service))
+            .add_service(DblEntryServer::new(grpc_service))
             .serve(grpc_addr);
 
         let http_server = axum::Server::bind(&addr)

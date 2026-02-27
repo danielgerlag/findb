@@ -4,14 +4,14 @@ use rust_decimal::Decimal;
 use time::Date;
 use uuid::Uuid;
 
-use findb_core::{
+use dblentry_core::{
     AccountExpression, AccountType,
     CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand,
     DataValue, JournalEntry, StatementTxn,
 };
 
 // Re-export core storage types so existing code using crate::storage::* still works
-pub use findb_core::storage::{StorageBackend, StorageError, TransactionId};
+pub use dblentry_core::storage::{StorageBackend, StorageError, TransactionId};
 
 struct Snapshot {
     ledger_accounts: BTreeMap<Arc<str>, LedgerStore>,

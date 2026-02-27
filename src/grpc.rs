@@ -10,10 +10,10 @@ use crate::{
 };
 
 pub mod pb {
-    tonic::include_proto!("findb.v1");
+    tonic::include_proto!("dblentry.v1");
 }
 
-use pb::finance_db_server::FinanceDb;
+use pb::dbl_entry_server::DblEntry;
 
 /// Escape a string value for safe interpolation into FQL single-quoted literals.
 fn escape_fql(s: &str) -> String {
@@ -33,11 +33,11 @@ fn validate_identifier(s: &str, field: &str) -> Result<(), Status> {
     Ok(())
 }
 
-pub struct FinanceDbService {
+pub struct DblEntryService {
     executor: Arc<StatementExecutor>,
 }
 
-impl FinanceDbService {
+impl DblEntryService {
     pub fn new(executor: Arc<StatementExecutor>) -> Self {
         Self { executor }
     }
@@ -57,7 +57,7 @@ impl FinanceDbService {
 }
 
 #[tonic::async_trait]
-impl FinanceDb for FinanceDbService {
+impl DblEntry for DblEntryService {
     async fn execute_fql(
         &self,
         request: Request<pb::ExecuteFqlRequest>,

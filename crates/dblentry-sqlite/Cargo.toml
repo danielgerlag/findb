@@ -1,12 +1,12 @@
 [package]
-name = "findb-postgres"
+name = "dblentry-sqlite"
 version = "0.1.0"
 edition = "2021"
-description = "PostgreSQL storage backend for FinanceDB"
+description = "SQLite storage backend for DblEntry"
 
 [dependencies]
-findb-core = { path = "../findb-core" }
-postgres = "0.19"
+dblentry-core = { path = "../dblentry-core" }
+rusqlite = { version = "0.31", features = ["bundled"] }
 rust_decimal = { version = "1.31", features = ["maths"] }
 time = { version = "0.3.23", features = ["std"] }
 tracing = "0.1"

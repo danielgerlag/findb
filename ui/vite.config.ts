@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const API_TARGET = process.env.FINDB_API_URL || 'http://localhost:3001'
+const API_TARGET = process.env.DBLENTRY_API_URL || 'http://localhost:3001'
 
 export default defineConfig({
   plugins: [vue()],

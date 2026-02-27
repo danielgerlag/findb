@@ -1,8 +1,8 @@
 [package]
-name = "findb-core"
+name = "dblentry-core"
 version = "0.1.0"
 edition = "2021"
-description = "Core types and traits for FinanceDB storage backends"
+description = "Core types and traits for DblEntry storage backends"
 
 [dependencies]
 rust_decimal = { version = "1.31", features = ["maths"] }

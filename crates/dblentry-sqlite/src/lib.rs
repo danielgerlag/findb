@@ -13,7 +13,7 @@ use rusqlite::{params, Connection};
 use time::{Date, Month, OffsetDateTime};
 use uuid::Uuid;
 
-use findb_core::{
+use dblentry_core::{
     AccountExpression, AccountType,
     CreateJournalCommand, CreateRateCommand, LedgerEntryCommand, SetRateCommand,
     DataValue, StatementTxn,
@@ -533,7 +533,7 @@ impl StorageBackend for SqliteStorage {
 
     fn begin_transaction(&self) -> Result<TransactionId, StorageError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("SAVEPOINT findb_tx")
+        conn.execute_batch("SAVEPOINT dblentry_tx")
             .map_err(|e| StorageError::Other(e.to_string()))?;
         let tx_id = self.tx_counter.fetch_add(1, Ordering::SeqCst);
         *self.active_tx.lock().unwrap() = Some(tx_id);
@@ -547,7 +547,7 @@ impl StorageBackend for SqliteStorage {
             return Err(StorageError::NoActiveTransaction);
         }
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("RELEASE SAVEPOINT findb_tx")
+        conn.execute_batch("RELEASE SAVEPOINT dblentry_tx")
             .map_err(|e| StorageError::Other(e.to_string()))?;
         *active = None;
         tracing::debug!(tx_id, "SQLite transaction committed");
@@ -560,7 +560,7 @@ impl StorageBackend for SqliteStorage {
             return Err(StorageError::NoActiveTransaction);
         }
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("ROLLBACK TO SAVEPOINT findb_tx")
+        conn.execute_batch("ROLLBACK TO SAVEPOINT dblentry_tx")
             .map_err(|e| StorageError::Other(e.to_string()))?;
         *active = None;
         tracing::debug!(tx_id, "SQLite transaction rolled back");

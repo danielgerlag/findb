@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { executeFql, parseTrialBalance, parseScalar, type TrialBalanceItem } from '../api/client'
 
-export const useFindbStore = defineStore('findb', () => {
+export const useDblEntryStore = defineStore('dblentry', () => {
   const trialBalance = ref<TrialBalanceItem[]>([])
   const accountCount = ref(0)
   const loading = ref(false)

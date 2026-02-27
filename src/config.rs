@@ -4,10 +4,10 @@ use clap::Parser;
 use serde::Deserialize;
 
 #[derive(Parser, Debug)]
-#[command(name = "findb", about = "FinanceDB - Domain specific database for finance")]
+#[command(name = "dblentry", about = "DblEntry - Domain specific database for double-entry bookkeeping")]
 pub struct CliArgs {
     /// Path to config file
-    #[arg(short, long, default_value = "findb.toml")]
+    #[arg(short, long, default_value = "dblentry.toml")]
     pub config: String,
 
     /// Port to listen on (overrides config file)
@@ -67,11 +67,11 @@ fn default_storage_backend() -> String {
 }
 
 fn default_sqlite_path() -> String {
-    "findb.db".to_string()
+    "dblentry.db".to_string()
 }
 
 fn default_postgres_url() -> String {
-    "host=localhost user=findb password=findb dbname=findb".to_string()
+    "host=localhost user=dblentry password=dblentry dbname=dblentry".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

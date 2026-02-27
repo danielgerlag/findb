@@ -1,20 +1,20 @@
 [workspace]
 members = [
     ".",
-    "crates/findb-core",
-    "crates/findb-sqlite",
-    "crates/findb-postgres",
+    "crates/dblentry-core",
+    "crates/dblentry-sqlite",
+    "crates/dblentry-postgres",
 ]
 
 [package]
-name = "findb"
+name = "dblentry"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-findb-core = { path = "crates/findb-core" }
-findb-sqlite = { path = "crates/findb-sqlite" }
-findb-postgres = { path = "crates/findb-postgres" }
+dblentry-core = { path = "crates/dblentry-core" }
+dblentry-sqlite = { path = "crates/dblentry-sqlite" }
+dblentry-postgres = { path = "crates/dblentry-postgres" }
 axum = "0.6.20"
 clap = { version = "4.3", features = ["derive"] }
 metrics = "0.21"
@@ -41,8 +41,8 @@ tonic-build = "0.10"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-findb-sqlite = { path = "crates/findb-sqlite" }
-findb-postgres = { path = "crates/findb-postgres" }
+dblentry-sqlite = { path = "crates/dblentry-sqlite" }
+dblentry-postgres = { path = "crates/dblentry-postgres" }
 postgres = "0.19"
 rust_decimal_macros = "1.31"
 

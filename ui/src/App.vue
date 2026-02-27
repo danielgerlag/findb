@@ -1,7 +1,7 @@
 <template>
   <div class="app-layout">
     <aside class="app-sidebar">
-      <h2>💰 FinanceDB</h2>
+      <h2>📒 DblEntry</h2>
       <nav>
         <router-link to="/"><i class="pi pi-home"></i> Dashboard</router-link>
         <router-link to="/query"><i class="pi pi-code"></i> FQL Query</router-link>

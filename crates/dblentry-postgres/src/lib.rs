@@ -13,7 +13,7 @@ use rust_decimal::Decimal;
 use time::{Date, Month, OffsetDateTime};
 use uuid::Uuid;
 
-use findb_core::{
+use dblentry_core::{
     AccountExpression, AccountType,
     CreateJournalCommand, CreateRateCommand, LedgerEntryCommand, SetRateCommand,
     DataValue, StatementTxn,
@@ -540,7 +540,7 @@ impl StorageBackend for PostgresStorage {
     fn begin_transaction(&self) -> Result<TransactionId, StorageError> {
         let mut client = self.client.lock().unwrap();
         client
-            .batch_execute("SAVEPOINT findb_tx")
+            .batch_execute("SAVEPOINT dblentry_tx")
             .map_err(|e| StorageError::Other(e.to_string()))?;
         let tx_id = self.tx_counter.fetch_add(1, Ordering::SeqCst);
         *self.active_tx.lock().unwrap() = Some(tx_id);
@@ -555,7 +555,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut client = self.client.lock().unwrap();
         client
-            .batch_execute("RELEASE SAVEPOINT findb_tx")
+            .batch_execute("RELEASE SAVEPOINT dblentry_tx")
             .map_err(|e| StorageError::Other(e.to_string()))?;
         *active = None;
         tracing::debug!(tx_id, "PostgreSQL transaction committed");
@@ -569,7 +569,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut client = self.client.lock().unwrap();
         client
-            .batch_execute("ROLLBACK TO SAVEPOINT findb_tx")
+            .batch_execute("ROLLBACK TO SAVEPOINT dblentry_tx")
             .map_err(|e| StorageError::Other(e.to_string()))?;
         *active = None;
         tracing::debug!(tx_id, "PostgreSQL transaction rolled back");

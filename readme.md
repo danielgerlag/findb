@@ -1,10 +1,10 @@
-# FinanceDB
+# DblEntry
 
-FinanceDB is a domain specific database for finance. It is an open-source accounting primitive, a building block upon which financial products can be built. It natively supports double-entry bookkeeping, multi-currency transactions, complex tax rules, and various accounting standards. It maintains specialized indexes tuned for financial use cases that enable fast and accurate queries and calculations.
+DblEntry is a domain specific database for finance. It is an open-source accounting primitive, a building block upon which financial products can be built. It natively supports double-entry bookkeeping, multi-currency transactions, complex tax rules, and various accounting standards. It maintains specialized indexes tuned for financial use cases that enable fast and accurate queries and calculations.
 
-FinanceDB is not just a data store. It also provides a domain specific query language (FQL) crafted for financial use cases, that is expressive, concise, and intuitive. It is based on the principles of double-entry bookkeeping and supports common financial concepts, such as accounts, journals, debits, credits, adjustments, reversals, accruals, deferrals, allocations, budgets, forecasts, and reports.  It enables developers and non-developers alike to perform complex financial operations and analyses with simple and readable syntax, such as calculating interest with fluctuating rates, amortization, cash flow, net present value, internal rate of return, and more. 
+DblEntry is not just a data store. It also provides a domain specific query language (FQL) crafted for financial use cases, that is expressive, concise, and intuitive. It is based on the principles of double-entry bookkeeping and supports common financial concepts, such as accounts, journals, debits, credits, adjustments, reversals, accruals, deferrals, allocations, budgets, forecasts, and reports.  It enables developers and non-developers alike to perform complex financial operations and analyses with simple and readable syntax, such as calculating interest with fluctuating rates, amortization, cash flow, net present value, internal rate of return, and more. 
 
-FinanceDB is an accounting ledger at its core, so standardized financial concepts and statements (balance sheet, income statement, etc..) are native to the platform.
+DblEntry is an accounting ledger at its core, so standardized financial concepts and statements (balance sheet, income statement, etc..) are native to the platform.
 
 ## Features
 
@@ -30,21 +30,21 @@ FinanceDB is an accounting ledger at its core, so standardized financial concept
 
 ```bash
 cargo build --release
-./target/release/findb
+./target/release/dblentry
 ```
 
-FinanceDB will start listening on `0.0.0.0:3000` by default.
+DblEntry will start listening on `0.0.0.0:3000` by default.
 
 ### Docker
 
 ```bash
-docker build -t findb .
-docker run -p 3000:3000 findb
+docker build -t dblentry .
+docker run -p 3000:3000 dblentry
 ```
 
 ### Configuration
 
-Copy `findb.toml.example` to `findb.toml` and customize:
+Copy `dblentry.toml.example` to `dblentry.toml` and customize:
 
 ```toml
 [server]
@@ -57,8 +57,8 @@ json = false
 
 [storage]
 backend = "memory"        # "memory", "sqlite", or "postgres"
-# sqlite_path = "findb.db"  # path for sqlite backend
-# postgres_url = "host=localhost user=findb password=findb dbname=findb"
+# sqlite_path = "dblentry.db"  # path for sqlite backend
+# postgres_url = "host=localhost user=dblentry password=dblentry dbname=dblentry"
 
 [auth]
 enabled = false
@@ -74,7 +74,7 @@ enabled = false
 
 CLI flags override config values:
 ```bash
-findb --port 8080 --log-level debug --config /path/to/findb.toml
+dblentry --port 8080 --log-level debug --config /path/to/dblentry.toml
 ```
 
 ## API Endpoints
@@ -125,9 +125,9 @@ Response:
 
 ### gRPC API
 
-Enable with `[grpc] enabled = true` in `findb.toml`. Default port: `50051`.
+Enable with `[grpc] enabled = true` in `dblentry.toml`. Default port: `50051`.
 
-The proto definition is at `proto/findb.proto`. Available RPCs:
+The proto definition is at `proto/dblentry.proto`. Available RPCs:
 
 | RPC | Description |
 |-----|-------------|

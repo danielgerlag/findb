@@ -11,4 +11,4 @@ pub mod function_registry;
 pub mod functions;
 
 // Re-export core types for convenience
-pub use findb_core;
+pub use dblentry_core;

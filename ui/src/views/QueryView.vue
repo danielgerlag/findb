@@ -56,7 +56,7 @@ const metadata = ref({ statements_executed: 0, journals_created: 0 })
 const history = ref<string[]>([])
 
 onMounted(() => {
-  const saved = localStorage.getItem('findb-query-history')
+  const saved = localStorage.getItem('dblentry-query-history')
   if (saved) history.value = JSON.parse(saved)
 })
 
@@ -80,10 +80,10 @@ async function executeQuery() {
     // Save to history
     const q = query.value.trim()
     history.value = [q, ...history.value.filter((h) => h !== q)].slice(0, 20)
-    localStorage.setItem('findb-query-history', JSON.stringify(history.value))
+    localStorage.setItem('dblentry-query-history', JSON.stringify(history.value))
   } catch (e: any) {
     error.value = e.message
-    toast.add({ severity: 'error', summary: 'Connection error', detail: 'Could not reach FinanceDB server. Is it running?', life: 5000 })
+    toast.add({ severity: 'error', summary: 'Connection error', detail: 'Could not reach DblEntry server. Is it running?', life: 5000 })
   } finally {
     loading.value = false
   }

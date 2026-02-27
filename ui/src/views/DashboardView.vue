@@ -46,7 +46,7 @@
       <div class="card">
         <h3>Balance Composition</h3>
         <Chart type="doughnut" :data="chartData" :options="chartOptions" v-if="chartData.labels.length > 0" />
-        <p v-else style="color: #94a3b8;">No data yet. Connect to a running FinanceDB instance.</p>
+        <p v-else style="color: #94a3b8;">No data yet. Connect to a running DblEntry instance.</p>
       </div>
     </div>
 
@@ -56,13 +56,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useFindbStore } from '../stores/findb'
+import { useDblEntryStore } from '../stores/dblentry'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import DatePicker from 'primevue/datepicker'
 import Chart from 'primevue/chart'
 
-const store = useFindbStore()
+const store = useDblEntryStore()
 const dateModel = ref(new Date())
 
 function formatMoney(val: string) {

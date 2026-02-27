@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use findb::evaluator::{ExpressionEvaluator, QueryVariables};
-use findb::function_registry::{Function, FunctionRegistry};
-use findb::functions::{Balance, Statement, TrialBalance};
-use findb::lexer;
-use findb::statement_executor::{ExecutionContext, StatementExecutor};
-use findb::storage::{InMemoryStorage, StorageBackend};
+use dblentry::evaluator::{ExpressionEvaluator, QueryVariables};
+use dblentry::function_registry::{Function, FunctionRegistry};
+use dblentry::functions::{Balance, Statement, TrialBalance};
+use dblentry::lexer;
+use dblentry::statement_executor::{ExecutionContext, StatementExecutor};
+use dblentry::storage::{InMemoryStorage, StorageBackend};
 
 fn setup() -> (Arc<dyn StorageBackend>, StatementExecutor) {
     let storage: Arc<dyn StorageBackend> = Arc::new(InMemoryStorage::new());

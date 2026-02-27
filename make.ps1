@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    FinanceDB build script for Windows (PowerShell equivalent of Makefile).
+    DblEntry build script for Windows (PowerShell equivalent of Makefile).
 
 .DESCRIPTION
     Run: .\make.ps1 <target>
@@ -38,7 +38,7 @@ function Invoke-Step([string]$Name, [scriptblock]$Action) {
 
 function Target-Help {
     Write-Host ""
-    Write-Host "FinanceDB build script" -ForegroundColor Cyan
+    Write-Host "DblEntry build script" -ForegroundColor Cyan
     Write-Host "Usage: .\make.ps1 <target> [-Port 3001]" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  build            Build the Rust backend (debug)"
@@ -51,8 +51,8 @@ function Target-Help {
     Write-Host "  fmt              Format Rust code"
     Write-Host "  fmt-check        Check Rust code formatting"
     Write-Host "  check            Run fmt-check + lint + test"
-    Write-Host "  run              Run findb server (debug)"
-    Write-Host "  run-release      Run findb server (release)"
+    Write-Host "  run              Run dblentry server (debug)"
+    Write-Host "  run-release      Run dblentry server (release)"
     Write-Host "  run-ui           Start the Vite dev server"
     Write-Host "  demo             Build and run backend + UI together"
     Write-Host "  docker           Build Docker image"
@@ -96,7 +96,7 @@ function Target-Demo {
 
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Green
-    Write-Host "  Starting FinanceDB demo"                    -ForegroundColor Green
+    Write-Host "  Starting DblEntry demo"                    -ForegroundColor Green
     Write-Host "  Backend: http://localhost:$Port"             -ForegroundColor Green
     Write-Host "  UI:      http://localhost:5173"              -ForegroundColor Green
     Write-Host "  Press Ctrl+C to stop"                       -ForegroundColor Green
@@ -141,14 +141,14 @@ function Target-Demo {
             Write-Host "Stopping frontend..." -ForegroundColor Gray
             Stop-Process -Id $frontend.Id -Force -ErrorAction SilentlyContinue
         }
-        # Kill child processes (findb.exe spawned by cargo run)
-        $findbProcs = Get-Process -Name "findb" -ErrorAction SilentlyContinue
-        foreach ($p in $findbProcs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+        # Kill child processes (dblentry.exe spawned by cargo run)
+        $dblProcs = Get-Process -Name "dblentry" -ErrorAction SilentlyContinue
+        foreach ($p in $dblProcs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
     }
 }
 
-function Target-Docker    { Invoke-Step "docker"     { docker build -t findb:latest . } }
-function Target-DockerRun { Target-Docker; Invoke-Step "docker-run" { docker run --rm -p "${Port}:3000" findb:latest } }
+function Target-Docker    { Invoke-Step "docker"     { docker build -t dblentry:latest . } }
+function Target-DockerRun { Target-Docker; Invoke-Step "docker-run" { docker run --rm -p "${Port}:3000" dblentry:latest } }
 function Target-Bench     { Invoke-Step "bench"      { cargo bench } }
 function Target-Clean {
     Invoke-Step "clean" {

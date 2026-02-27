@@ -1,7 +1,7 @@
 .PHONY: build build-release build-ui build-all test test-all lint fmt fmt-check \
        check run run-release run-ui demo docker docker-run bench clean help
 
-FINDB_PORT ?= 3001
+DBLENTRY_PORT ?= 3001
 
 # Default target
 help: ## Show available targets
@@ -16,8 +16,8 @@ help: ## Show available targets
 	@echo   fmt            Format Rust code
 	@echo   fmt-check      Check Rust code formatting
 	@echo   check          Run fmt-check + lint + test
-	@echo   run            Run findb server (debug)
-	@echo   run-release    Run findb server (release)
+	@echo   run            Run dblentry server (debug)
+	@echo   run-release    Run dblentry server (release)
 	@echo   run-ui         Start the Vite dev server
 	@echo   demo           Build and run backend + UI (Unix only; use make.ps1 on Windows)
 	@echo   docker         Build Docker image
@@ -66,10 +66,10 @@ check: fmt-check lint test
 # ---------------------------------------------------------------------------
 
 run:
-	cargo run -- --port $(FINDB_PORT)
+	cargo run -- --port $(DBLENTRY_PORT)
 
 run-release:
-	cargo run --release -- --port $(FINDB_PORT)
+	cargo run --release -- --port $(DBLENTRY_PORT)
 
 run-ui:
 	cd ui && npm run dev
@@ -81,14 +81,14 @@ run-ui:
 demo: build build-ui
 	@echo ""
 	@echo "============================================"
-	@echo "  Starting FinanceDB demo"
-	@echo "  Backend: http://localhost:$(FINDB_PORT)"
+	@echo "  Starting DblEntry demo"
+	@echo "  Backend: http://localhost:$(DBLENTRY_PORT)"
 	@echo "  UI:      http://localhost:5173"
 	@echo "  Press Ctrl+C to stop"
 	@echo "============================================"
 	@echo ""
 	@trap 'kill 0' EXIT; \
-		cargo run -- --port $(FINDB_PORT) & \
+		cargo run -- --port $(DBLENTRY_PORT) & \
 		sleep 2 && cd ui && npm run dev & \
 		wait
 
@@ -97,10 +97,10 @@ demo: build build-ui
 # ---------------------------------------------------------------------------
 
 docker:
-	docker build -t findb:latest .
+	docker build -t dblentry:latest .
 
 docker-run: docker
-	docker run --rm -p $(FINDB_PORT):3000 findb:latest
+	docker run --rm -p $(DBLENTRY_PORT):3000 dblentry:latest
 
 # ---------------------------------------------------------------------------
 # Bench & Clean

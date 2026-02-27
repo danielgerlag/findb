@@ -1,4 +1,4 @@
-//! Core types and traits for FinanceDB storage backends.
+//! Core types and traits for DblEntry storage backends.
 //!
 //! This crate provides the `StorageBackend` trait and all associated types,
 //! enabling pluggable storage implementations in separate crates.

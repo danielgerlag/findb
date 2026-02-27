@@ -2,8 +2,8 @@ use std::{sync::Arc, collections::BTreeMap};
 
 use time::Date;
 
-// Re-export from findb-core so all existing crate::ast::AccountType references work
-pub use findb_core::models::{AccountType, AccountExpression};
+// Re-export from dblentry-core so all existing crate::ast::AccountType references work
+pub use dblentry_core::models::{AccountType, AccountExpression};
 
 
 #[derive(Debug, Clone, PartialEq)]
