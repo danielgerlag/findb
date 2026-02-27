@@ -212,7 +212,7 @@ function handleKeydown(e: KeyboardEvent) {
   padding: 2rem;
   animation: fadeIn 0.5s ease;
 }
-.tour-finished h2 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #1e293b; }
-.tour-finished p { color: #64748b; margin-bottom: 1rem; }
+.tour-finished h2 { font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--text-heading); }
+.tour-finished p { color: var(--text-secondary); margin-bottom: 1rem; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 </style>

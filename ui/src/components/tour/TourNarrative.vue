@@ -28,16 +28,16 @@ const renderedNote = computed(() => props.note ? marked.parse(props.note) as str
 .tour-text {
   font-size: 1rem;
   line-height: 1.7;
-  color: #334155;
+  color: var(--text-primary);
   margin-bottom: 1rem;
 }
-.tour-text :deep(strong) { color: #1e293b; font-weight: 600; }
+.tour-text :deep(strong) { color: var(--text-strong); font-weight: 600; }
 .tour-text :deep(code) {
-  background: #f1f5f9;
+  background: var(--bg-surface);
   padding: 0.15em 0.4em;
   border-radius: 4px;
   font-size: 0.9em;
-  color: #0f172a;
+  color: var(--accent);
 }
 .tour-text :deep(ul), .tour-text :deep(ol) {
   padding-left: 1.5rem;
@@ -46,18 +46,18 @@ const renderedNote = computed(() => props.note ? marked.parse(props.note) as str
 .tour-note {
   display: flex;
   gap: 0.75rem;
-  background: #eff6ff;
-  border-left: 3px solid #3b82f6;
+  background: var(--info-bg);
+  border-left: 3px solid var(--info-border);
   padding: 0.75rem 1rem;
   border-radius: 6px;
   margin-bottom: 1rem;
   font-size: 0.9rem;
-  color: #1e40af;
+  color: var(--info-text);
 }
 .tour-note .pi { margin-top: 0.15rem; flex-shrink: 0; }
 .tour-caption {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-muted);
   font-style: italic;
   margin-bottom: 0.5rem;
 }

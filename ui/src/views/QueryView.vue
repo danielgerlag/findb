@@ -13,7 +13,7 @@
       <div class="toolbar">
         <Button label="Execute" icon="pi pi-play" @click="executeQuery" :loading="loading" />
         <Button label="Clear" icon="pi pi-trash" severity="secondary" @click="clearResults" />
-        <span style="color: #94a3b8; font-size: 0.85rem;">Ctrl+Enter to execute</span>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">Ctrl+Enter to execute</span>
       </div>
     </div>
 
@@ -23,7 +23,7 @@
       <h3>Results ({{ metadata.statements_executed }} statements, {{ metadata.journals_created }} journals)</h3>
       <div v-if="results.length > 0">
         <div v-for="(result, i) in results" :key="i" style="margin-bottom: 1rem;">
-          <pre style="background: #f1f5f9; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem;">{{ result }}</pre>
+          <pre style="background: var(--bg-surface); padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; border: 1px solid var(--border);">{{ result }}</pre>
         </div>
       </div>
       <div v-else class="success-msg">

@@ -2,8 +2,44 @@
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #213547;
-  background-color: #f8f9fa;
+
+  /* Dark theme palette */
+  --bg-body: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-surface-alt: #162032;
+  --bg-sidebar: #0c1524;
+  --bg-card: #1e293b;
+  --bg-input: #1e293b;
+  --bg-code: #f1f5f9;
+  --border: #334155;
+  --border-subtle: #1e293b;
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-heading: #e2e8f0;
+  --text-strong: #f8fafc;
+
+  --accent: #38bdf8;
+  --accent-hover: #334155;
+
+  --error-bg: #451a1a;
+  --error-text: #fca5a5;
+  --error-border: #dc2626;
+  --success-bg: #14332a;
+  --success-text: #6ee7b7;
+  --success-border: #22c55e;
+
+  --info-bg: #172554;
+  --info-text: #93c5fd;
+  --info-border: #3b82f6;
+
+  --shadow: rgba(0, 0, 0, 0.3);
+  --tag-bg: #334155;
+  --tag-text: #94a3b8;
+
+  color: var(--text-primary);
+  background-color: var(--bg-body);
 }
 
 * {
@@ -19,17 +55,18 @@
 
 .app-sidebar {
   width: 240px;
-  background: #1e293b;
+  background: var(--bg-sidebar);
   color: #e2e8f0;
   padding: 1rem 0;
   flex-shrink: 0;
+  border-right: 1px solid var(--border);
 }
 
 .app-sidebar h2 {
   padding: 0 1.25rem;
   margin-bottom: 1.5rem;
   font-size: 1.25rem;
-  color: #38bdf8;
+  color: var(--accent);
 }
 
 .app-sidebar nav a {
@@ -43,13 +80,13 @@
 }
 
 .app-sidebar nav a:hover {
-  background: #334155;
+  background: var(--accent-hover);
 }
 
 .app-sidebar nav a.router-link-active {
-  background: #334155;
-  color: #38bdf8;
-  border-left: 3px solid #38bdf8;
+  background: var(--accent-hover);
+  color: var(--accent);
+  border-left: 3px solid var(--accent);
 }
 
 .app-main {
@@ -57,6 +94,7 @@
   padding: 1.5rem 2rem;
   overflow-x: auto;
   min-width: 0;
+  background: var(--bg-body);
 }
 
 .page-header {
@@ -66,7 +104,7 @@
 .page-header h1 {
   font-size: 1.5rem;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-heading);
 }
 
 .kpi-grid {
@@ -77,36 +115,38 @@
 }
 
 .kpi-card {
-  background: white;
+  background: var(--bg-card);
   border-radius: 8px;
   padding: 1.25rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px var(--shadow);
+  border: 1px solid var(--border);
 }
 
 .kpi-card .label {
   font-size: 0.85rem;
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 0.25rem;
 }
 
 .kpi-card .value {
   font-size: 1.5rem;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--text-heading);
 }
 
 .card {
-  background: white;
+  background: var(--bg-card);
   border-radius: 8px;
   padding: 1.25rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px var(--shadow);
+  border: 1px solid var(--border);
   margin-bottom: 1.5rem;
 }
 
 .card h3 {
   margin-bottom: 1rem;
   font-size: 1.1rem;
-  color: #334155;
+  color: var(--text-heading);
 }
 
 .grid-2 {
@@ -121,13 +161,15 @@
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 0.9rem;
   padding: 1rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 6px;
   resize: vertical;
+  background: var(--bg-input);
+  color: var(--text-primary);
 }
 
 .fql-editor textarea:focus {
-  outline: 2px solid #38bdf8;
+  outline: 2px solid var(--accent);
   border-color: transparent;
 }
 
@@ -140,27 +182,27 @@
 }
 
 .error-msg {
-  background: #fef2f2;
-  color: #dc2626;
+  background: var(--error-bg);
+  color: var(--error-text);
   padding: 0.75rem 1rem;
   border-radius: 6px;
-  border-left: 3px solid #dc2626;
+  border-left: 3px solid var(--error-border);
   margin: 0.5rem 0;
 }
 
 .success-msg {
-  background: #f0fdf4;
-  color: #16a34a;
+  background: var(--success-bg);
+  color: var(--success-text);
   padding: 0.75rem 1rem;
   border-radius: 6px;
-  border-left: 3px solid #22c55e;
+  border-left: 3px solid var(--success-border);
   margin: 0.5rem 0;
 }
 
 .empty-state {
   text-align: center;
   padding: 2rem;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-style: italic;
 }
 
@@ -181,7 +223,7 @@
 
 .form-field label {
   font-size: 0.85rem;
-  color: #64748b;
+  color: var(--text-muted);
   font-weight: 500;
 }
 
@@ -214,7 +256,7 @@
   }
 
   .app-sidebar nav a.router-link-active {
-    border-bottom: 2px solid #38bdf8;
+    border-bottom: 2px solid var(--accent);
   }
 
   .app-main {

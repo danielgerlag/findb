@@ -46,7 +46,7 @@
       <div class="card">
         <h3>Balance Composition</h3>
         <Chart type="doughnut" :data="chartData" :options="chartOptions" v-if="chartData.labels.length > 0" />
-        <p v-else style="color: #94a3b8;">No data yet. Connect to a running DblEntry instance.</p>
+        <p v-else style="color: var(--text-muted);">No data yet. Connect to a running DblEntry instance.</p>
       </div>
     </div>
 

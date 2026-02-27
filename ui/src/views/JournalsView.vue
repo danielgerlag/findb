@@ -58,7 +58,7 @@
       <!-- FQL Preview -->
       <div v-if="fqlPreview" style="margin-top: 1rem;">
         <h3>Generated FQL</h3>
-        <pre style="background: #f1f5f9; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;">{{ fqlPreview }}</pre>
+        <pre style="background: var(--bg-surface); padding: 0.75rem; border-radius: 6px; font-size: 0.85rem; border: 1px solid var(--border);">{{ fqlPreview }}</pre>
       </div>
 
       <div class="toolbar" style="margin-top: 1rem;">
@@ -68,8 +68,8 @@
     </div>
 
     <div v-if="error" class="error-msg">{{ error }}</div>
-    <div v-if="success" class="card" style="background: #f0fdf4; border-left: 3px solid #22c55e;">
-      <p style="color: #16a34a;">✓ Journal created successfully</p>
+    <div v-if="success" class="success-msg">
+      <p>✓ Journal created successfully</p>
     </div>
   </div>
 </template>

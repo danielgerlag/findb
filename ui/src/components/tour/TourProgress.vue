@@ -41,14 +41,14 @@ const progressPercent = computed(() =>
 .tour-progress { margin-bottom: 1.5rem; }
 .progress-bar {
   height: 4px;
-  background: #e2e8f0;
+  background: var(--border);
   border-radius: 2px;
   overflow: hidden;
   margin-bottom: 0.75rem;
 }
 .progress-fill {
   height: 100%;
-  background: #3b82f6;
+  background: var(--accent);
   transition: width 0.3s ease;
   border-radius: 2px;
 }
@@ -61,10 +61,10 @@ const progressPercent = computed(() =>
   flex: 1;
   text-align: center;
   font-size: 0.85rem;
-  color: #64748b;
+  color: var(--text-muted);
 }
 .step-title {
-  color: #1e293b;
+  color: var(--text-heading);
   font-weight: 500;
 }
 </style>

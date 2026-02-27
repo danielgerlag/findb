@@ -101,8 +101,8 @@ watch(() => props.code, () => {
 
 <style scoped>
 .tour-code-block {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #0f172a;
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow-x: auto;
   margin-bottom: 1rem;
