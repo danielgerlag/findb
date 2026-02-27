@@ -168,7 +168,20 @@ fn data_value_to_str(dv: &DataValue) -> String {
 }
 
 impl StorageBackend for PostgresStorage {
-    fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError> {
+    fn create_entity(&self, _entity_id: &str) -> Result<(), StorageError> {
+        // TODO: Add entities table and full entity support
+        Ok(())
+    }
+
+    fn list_entities(&self) -> Vec<Arc<str>> {
+        vec![Arc::from("default")]
+    }
+
+    fn entity_exists(&self, _entity_id: &str) -> bool {
+        true // Postgres currently only supports default entity
+    }
+
+    fn create_account(&self, _entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         client
             .execute(
@@ -180,11 +193,11 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
-    fn create_rate(&self, _rate: &CreateRateCommand) -> Result<(), StorageError> {
+    fn create_rate(&self, _entity_id: &str, _rate: &CreateRateCommand) -> Result<(), StorageError> {
         Ok(())
     }
 
-    fn set_rate(&self, command: &SetRateCommand) -> Result<(), StorageError> {
+    fn set_rate(&self, _entity_id: &str, command: &SetRateCommand) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         let date_str = date_to_str(command.date);
         let val_str = command.rate.to_string();
@@ -198,7 +211,7 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
-    fn get_rate(&self, id: &str, date: Date) -> Result<Decimal, StorageError> {
+    fn get_rate(&self, _entity_id: &str, id: &str, date: Date) -> Result<Decimal, StorageError> {
         let mut client = self.client.lock().unwrap();
         let date_str = date_to_str(date);
         let result = client.query_opt(
@@ -216,7 +229,7 @@ impl StorageBackend for PostgresStorage {
         }
     }
 
-    fn create_journal(&self, command: &CreateJournalCommand) -> Result<(), StorageError> {
+    fn create_journal(&self, _entity_id: &str, command: &CreateJournalCommand) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         let jid = Uuid::new_v4().to_string();
         let seq = Self::next_sequence(&mut client)?;
@@ -306,6 +319,7 @@ impl StorageBackend for PostgresStorage {
 
     fn get_balance(
         &self,
+        _entity_id: &str,
         account_id: &str,
         date: Date,
         dimension: Option<&(Arc<str>, Arc<DataValue>)>,
@@ -360,6 +374,7 @@ impl StorageBackend for PostgresStorage {
 
     fn get_statement(
         &self,
+        _entity_id: &str,
         account_id: &str,
         from: Bound<Date>,
         to: Bound<Date>,
@@ -491,6 +506,7 @@ impl StorageBackend for PostgresStorage {
 
     fn get_dimension_values(
         &self,
+        _entity_id: &str,
         account_id: &str,
         dimension_key: Arc<str>,
         from: Date,
@@ -522,7 +538,7 @@ impl StorageBackend for PostgresStorage {
         Ok(result)
     }
 
-    fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)> {
+    fn list_accounts(&self, _entity_id: &str) -> Vec<(Arc<str>, AccountType)> {
         let mut client = self.client.lock().unwrap();
         let rows = client
             .query("SELECT id, account_type FROM accounts ORDER BY id", &[])

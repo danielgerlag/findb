@@ -13,17 +13,33 @@ use dblentry_core::{
 // Re-export core storage types so existing code using crate::storage::* still works
 pub use dblentry_core::storage::{StorageBackend, StorageError, TransactionId};
 
-struct Snapshot {
+/// Default entity used when no entity is specified
+pub const DEFAULT_ENTITY: &str = "default";
+
+#[derive(Clone)]
+struct EntityData {
     ledger_accounts: BTreeMap<Arc<str>, LedgerStore>,
     rates: BTreeMap<Arc<str>, RateStore>,
     journals: BTreeMap<u128, JournalEntry>,
+}
+
+impl EntityData {
+    fn new() -> Self {
+        Self {
+            ledger_accounts: BTreeMap::new(),
+            rates: BTreeMap::new(),
+            journals: BTreeMap::new(),
+        }
+    }
+}
+
+struct Snapshot {
+    entities: BTreeMap<Arc<str>, EntityData>,
     sequence_value: u64,
 }
 
 pub struct InMemoryStorage {
-    ledger_accounts: RwLock<BTreeMap<Arc<str>, LedgerStore>>,
-    rates: RwLock<BTreeMap<Arc<str>, RateStore>>,
-    journals: RwLock<BTreeMap<u128, JournalEntry>>,
+    entities: RwLock<BTreeMap<Arc<str>, EntityData>>,
     sequence_counter: AtomicU64,
     tx_counter: AtomicU64,
     snapshots: RwLock<HashMap<TransactionId, Snapshot>>,
@@ -37,10 +53,10 @@ impl Default for InMemoryStorage {
 
 impl InMemoryStorage {
     pub fn new() -> Self {
+        let mut entities = BTreeMap::new();
+        entities.insert(Arc::from(DEFAULT_ENTITY), EntityData::new());
         Self {
-            ledger_accounts: RwLock::new(BTreeMap::new()),
-            rates: RwLock::new(BTreeMap::new()),
-            journals: RwLock::new(BTreeMap::new()),
+            entities: RwLock::new(entities),
             sequence_counter: AtomicU64::new(1),
             tx_counter: AtomicU64::new(1),
             snapshots: RwLock::new(HashMap::new()),
@@ -53,34 +69,60 @@ impl InMemoryStorage {
 }
 
 impl StorageBackend for InMemoryStorage {
-    fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError> {
-        let mut ledger_accounts = self.ledger_accounts.write().unwrap();
-        ledger_accounts.insert(account.id.clone(), LedgerStore::new(account.account_type.clone()));
+    fn create_entity(&self, entity_id: &str) -> Result<(), StorageError> {
+        let mut entities = self.entities.write().unwrap();
+        let key: Arc<str> = Arc::from(entity_id);
+        if entities.contains_key(&key) {
+            return Err(StorageError::EntityAlreadyExists(entity_id.to_string()));
+        }
+        entities.insert(key, EntityData::new());
         Ok(())
     }
 
-    fn create_rate(&self, rate: &CreateRateCommand) -> Result<(), StorageError> {
-        let mut rates = self.rates.write().unwrap();
-        rates.insert(rate.id.clone(), RateStore::new());
+    fn list_entities(&self) -> Vec<Arc<str>> {
+        self.entities.read().unwrap().keys().cloned().collect()
+    }
+
+    fn entity_exists(&self, entity_id: &str) -> bool {
+        self.entities.read().unwrap().contains_key(entity_id)
+    }
+
+    fn create_account(&self, entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
+        let mut entities = self.entities.write().unwrap();
+        let entity = entities.get_mut(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        entity.ledger_accounts.insert(account.id.clone(), LedgerStore::new(account.account_type.clone()));
         Ok(())
     }
 
-    fn set_rate(&self, command: &SetRateCommand) -> Result<(), StorageError> {
-        let mut rates = self.rates.write().unwrap();
-        let rate_store = rates.get_mut(&command.id)
+    fn create_rate(&self, entity_id: &str, rate: &CreateRateCommand) -> Result<(), StorageError> {
+        let mut entities = self.entities.write().unwrap();
+        let entity = entities.get_mut(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        entity.rates.insert(rate.id.clone(), RateStore::new());
+        Ok(())
+    }
+
+    fn set_rate(&self, entity_id: &str, command: &SetRateCommand) -> Result<(), StorageError> {
+        let mut entities = self.entities.write().unwrap();
+        let entity = entities.get_mut(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        let rate_store = entity.rates.get_mut(&command.id)
             .ok_or_else(|| StorageError::RateNotFound(command.id.to_string()))?;
         rate_store.add_rate(command.date, command.rate);
         Ok(())
     }
 
-    fn get_rate(&self, id: &str, date: Date) -> Result<Decimal, StorageError> {
-        let rates = self.rates.read().unwrap();
-        let rate_store = rates.get(id)
+    fn get_rate(&self, entity_id: &str, id: &str, date: Date) -> Result<Decimal, StorageError> {
+        let entities = self.entities.read().unwrap();
+        let entity = entities.get(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        let rate_store = entity.rates.get(id)
             .ok_or_else(|| StorageError::RateNotFound(id.to_string()))?;
         rate_store.get_rate(date)
     }
 
-    fn create_journal(&self, command: &CreateJournalCommand) -> Result<(), StorageError> {
+    fn create_journal(&self, entity_id: &str, command: &CreateJournalCommand) -> Result<(), StorageError> {
         let jid = Uuid::new_v4().as_u128();
         let seq = self.next_sequence();
 
@@ -94,48 +136,50 @@ impl StorageBackend for InMemoryStorage {
             created_at: time::OffsetDateTime::now_utc(),
         };
 
-        self.journals.write().unwrap().insert(jid, entry);
+        let mut entities = self.entities.write().unwrap();
+        let entity = entities.get_mut(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
 
-        let mut ledger_accounts = self.ledger_accounts.write().unwrap();
+        entity.journals.insert(jid, entry);
 
         for ledger_entry in &command.ledger_entries {
             match ledger_entry {
                 LedgerEntryCommand::Debit {account_id, amount} => {
-                    let ledger_account = ledger_accounts.get_mut(account_id)
+                    let ledger_account = entity.ledger_accounts.get_mut(account_id)
                         .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
                     ledger_account.add_entry(command.date, jid, *amount, &command.dimensions);
                 },
                 LedgerEntryCommand::Credit {account_id, amount} => {
-                    let ledger_account = ledger_accounts.get_mut(account_id)
+                    let ledger_account = entity.ledger_accounts.get_mut(account_id)
                         .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
                     ledger_account.add_entry(command.date, jid, -*amount, &command.dimensions);
                 },
             }
         }
 
-        
         Ok(())
     }
 
-    fn get_balance(&self, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
-        let ledger_accounts = self.ledger_accounts.read().unwrap();
-        let acct = ledger_accounts.get(account_id)
+    fn get_balance(&self, entity_id: &str, account_id: &str, date: Date, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
+        let entities = self.entities.read().unwrap();
+        let entity = entities.get(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        let acct = entity.ledger_accounts.get(account_id)
             .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
         Ok(acct.get_balance(date, dimension))
     }
 
-    fn get_statement(&self, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError> {
-        let ledger_accounts = self.ledger_accounts.read().unwrap();
-        let acct = ledger_accounts.get(account_id)
+    fn get_statement(&self, entity_id: &str, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError> {
+        let entities = self.entities.read().unwrap();
+        let entity = entities.get(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        let acct = entity.ledger_accounts.get(account_id)
             .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
         let entries = acct.get_statement(from, to, dimension);
-        drop(ledger_accounts);
+
         let mut result = Vec::new();
-
-        let journals = self.journals.read().unwrap();
-
         for e in entries {
-            if let Some(j) = journals.get(&e.0) {
+            if let Some(j) = entity.journals.get(&e.0) {
                 result.push(StatementTxn {
                     journal_id: e.0,
                     date: j.date,
@@ -149,30 +193,29 @@ impl StorageBackend for InMemoryStorage {
         Ok(DataValue::Statement(result))
     }
 
-    fn get_dimension_values(&self, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError> {
-        let ledger_accounts = self.ledger_accounts.read().unwrap();
-        let acct = ledger_accounts.get(account_id)
+    fn get_dimension_values(&self, entity_id: &str, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError> {
+        let entities = self.entities.read().unwrap();
+        let entity = entities.get(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        let acct = entity.ledger_accounts.get(account_id)
             .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
-        let entries = acct.get_dimension_values(dimension_key, from, to);
-        drop(ledger_accounts);
-        Ok(entries)
+        Ok(acct.get_dimension_values(dimension_key, from, to))
     }
 
-    fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)> {
-        let ledger_accounts = self.ledger_accounts.read().unwrap();
-        let mut result = Vec::new();
-        for (k, v) in ledger_accounts.iter() {
-            result.push((k.clone(), v.account_type.clone()));
+    fn list_accounts(&self, entity_id: &str) -> Vec<(Arc<str>, AccountType)> {
+        let entities = self.entities.read().unwrap();
+        match entities.get(entity_id) {
+            Some(entity) => entity.ledger_accounts.iter()
+                .map(|(k, v)| (k.clone(), v.account_type.clone()))
+                .collect(),
+            None => Vec::new(),
         }
-        result
     }
 
     fn begin_transaction(&self) -> Result<TransactionId, StorageError> {
         let tx_id = self.tx_counter.fetch_add(1, Ordering::SeqCst);
         let snapshot = Snapshot {
-            ledger_accounts: self.ledger_accounts.read().unwrap().clone(),
-            rates: self.rates.read().unwrap().clone(),
-            journals: self.journals.read().unwrap().clone(),
+            entities: self.entities.read().unwrap().clone(),
             sequence_value: self.sequence_counter.load(Ordering::SeqCst),
         };
         self.snapshots.write().unwrap().insert(tx_id, snapshot);
@@ -190,9 +233,7 @@ impl StorageBackend for InMemoryStorage {
     fn rollback_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError> {
         let snapshot = self.snapshots.write().unwrap().remove(&tx_id)
             .ok_or(StorageError::NoActiveTransaction)?;
-        *self.ledger_accounts.write().unwrap() = snapshot.ledger_accounts;
-        *self.rates.write().unwrap() = snapshot.rates;
-        *self.journals.write().unwrap() = snapshot.journals;
+        *self.entities.write().unwrap() = snapshot.entities;
         self.sequence_counter.store(snapshot.sequence_value, Ordering::SeqCst);
         tracing::debug!(tx_id, "Transaction rolled back");
         Ok(())

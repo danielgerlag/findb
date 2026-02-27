@@ -7,6 +7,10 @@ service DblEntry {
   // Execute raw FQL statements
   rpc ExecuteFql(ExecuteFqlRequest) returns (ExecuteFqlResponse);
 
+  // Entity operations
+  rpc CreateEntity(CreateEntityRequest) returns (CreateEntityResponse);
+  rpc ListEntities(ListEntitiesRequest) returns (ListEntitiesResponse);
+
   // Account operations
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
@@ -31,6 +35,7 @@ service DblEntry {
 
 message ExecuteFqlRequest {
   string query = 1;
+  string entity_id = 2; // optional, defaults to "default"
 }
 
 message ExecuteFqlResponse {
@@ -41,18 +46,37 @@ message ExecuteFqlResponse {
   int32 journals_created = 5;
 }
 
+// --- Entities ---
+
+message CreateEntityRequest {
+  string name = 1;
+}
+
+message CreateEntityResponse {
+  bool success = 1;
+}
+
+message ListEntitiesRequest {}
+
+message ListEntitiesResponse {
+  repeated string entities = 1;
+}
+
 // --- Accounts ---
 
 message CreateAccountRequest {
   string id = 1;
   string account_type = 2; // ASSET, LIABILITY, EQUITY, INCOME, EXPENSE
+  string entity_id = 3; // optional, defaults to "default"
 }
 
 message CreateAccountResponse {
   bool success = 1;
 }
 
-message ListAccountsRequest {}
+message ListAccountsRequest {
+  string entity_id = 1; // optional, defaults to "default"
+}
 
 message ListAccountsResponse {
   repeated AccountInfo accounts = 1;
@@ -70,6 +94,7 @@ message GetBalanceRequest {
   string date = 2;               // YYYY-MM-DD
   optional string dimension_key = 3;
   optional string dimension_value = 4;
+  string entity_id = 5; // optional, defaults to "default"
 }
 
 message GetBalanceResponse {
@@ -84,6 +109,7 @@ message GetStatementRequest {
   string to_date = 3;
   optional string dimension_key = 4;
   optional string dimension_value = 5;
+  string entity_id = 6; // optional, defaults to "default"
 }
 
 message GetStatementResponse {
@@ -101,6 +127,7 @@ message StatementTransaction {
 
 message GetTrialBalanceRequest {
   string date = 1;
+  string entity_id = 2; // optional, defaults to "default"
 }
 
 message GetTrialBalanceResponse {
@@ -117,6 +144,7 @@ message TrialBalanceItem {
 
 message CreateRateRequest {
   string id = 1;
+  string entity_id = 2; // optional, defaults to "default"
 }
 
 message CreateRateResponse {
@@ -127,6 +155,7 @@ message SetRateRequest {
   string rate_id = 1;
   string value = 2;
   string date = 3;
+  string entity_id = 4; // optional, defaults to "default"
 }
 
 message SetRateResponse {
@@ -141,6 +170,7 @@ message CreateJournalRequest {
   string description = 3;
   map<string, string> dimensions = 4;
   repeated JournalOperation operations = 5;
+  string entity_id = 6; // optional, defaults to "default"
 }
 
 message JournalOperation {

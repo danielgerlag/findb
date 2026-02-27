@@ -6,6 +6,7 @@ use crate::{
     evaluator::QueryVariables,
     lexer,
     models::DataValue,
+    storage::{StorageBackend, DEFAULT_ENTITY},
     statement_executor::{ExecutionContext, StatementExecutor},
 };
 
@@ -33,22 +34,29 @@ fn validate_identifier(s: &str, field: &str) -> Result<(), Status> {
     Ok(())
 }
 
+/// Returns the entity_id to use, defaulting to DEFAULT_ENTITY if empty.
+fn resolve_entity_id(entity_id: &str) -> &str {
+    if entity_id.is_empty() { DEFAULT_ENTITY } else { entity_id }
+}
+
 pub struct DblEntryService {
     executor: Arc<StatementExecutor>,
+    storage: Arc<dyn StorageBackend>,
 }
 
 impl DblEntryService {
-    pub fn new(executor: Arc<StatementExecutor>) -> Self {
-        Self { executor }
+    pub fn new(executor: Arc<StatementExecutor>, storage: Arc<dyn StorageBackend>) -> Self {
+        Self { executor, storage }
     }
 
     #[allow(clippy::result_large_err)]
-    fn execute_fql(&self, fql: &str) -> Result<Vec<crate::statement_executor::ExecutionResult>, Status> {
+    fn execute_fql_with_entity(&self, fql: &str, entity_id: &str) -> Result<Vec<crate::statement_executor::ExecutionResult>, Status> {
         let statements = lexer::parse(fql)
             .map_err(|e| Status::invalid_argument(format!("Parse error: {}", e)))?;
 
         let eff_date = time::OffsetDateTime::now_utc().date();
         let mut context = ExecutionContext::new(eff_date, QueryVariables::new());
+        context.entity_id = Arc::from(resolve_entity_id(entity_id));
 
         self.executor
             .execute_script(&mut context, &statements)
@@ -62,9 +70,10 @@ impl DblEntry for DblEntryService {
         &self,
         request: Request<pb::ExecuteFqlRequest>,
     ) -> Result<Response<pb::ExecuteFqlResponse>, Status> {
-        let query = &request.into_inner().query;
+        let req = request.into_inner();
+        let entity_id = resolve_entity_id(&req.entity_id);
 
-        let statements = match lexer::parse(query) {
+        let statements = match lexer::parse(&req.query) {
             Ok(s) => s,
             Err(e) => {
                 return Ok(Response::new(pb::ExecuteFqlResponse {
@@ -79,6 +88,7 @@ impl DblEntry for DblEntryService {
 
         let eff_date = time::OffsetDateTime::now_utc().date();
         let mut context = ExecutionContext::new(eff_date, QueryVariables::new());
+        context.entity_id = Arc::from(entity_id);
 
         match self.executor.execute_script(&mut context, &statements) {
             Ok(script_results) => {
@@ -109,6 +119,24 @@ impl DblEntry for DblEntryService {
         }
     }
 
+    async fn create_entity(
+        &self,
+        request: Request<pb::CreateEntityRequest>,
+    ) -> Result<Response<pb::CreateEntityResponse>, Status> {
+        let req = request.into_inner();
+        self.storage.create_entity(&req.name)
+            .map_err(|e| Status::internal(format!("{}", e)))?;
+        Ok(Response::new(pb::CreateEntityResponse { success: true }))
+    }
+
+    async fn list_entities(
+        &self,
+        _request: Request<pb::ListEntitiesRequest>,
+    ) -> Result<Response<pb::ListEntitiesResponse>, Status> {
+        let entities: Vec<String> = self.storage.list_entities().iter().map(|e| e.to_string()).collect();
+        Ok(Response::new(pb::ListEntitiesResponse { entities }))
+    }
+
     async fn create_account(
         &self,
         request: Request<pb::CreateAccountRequest>,
@@ -117,16 +145,17 @@ impl DblEntry for DblEntryService {
         validate_identifier(&req.id, "account ID")?;
         validate_identifier(&req.account_type, "account type")?;
         let fql = format!("CREATE ACCOUNT @{} {}", req.id, req.account_type.to_uppercase());
-        self.execute_fql(&fql)?;
+        self.execute_fql_with_entity(&fql, &req.entity_id)?;
         Ok(Response::new(pb::CreateAccountResponse { success: true }))
     }
 
     async fn list_accounts(
         &self,
-        _request: Request<pb::ListAccountsRequest>,
+        request: Request<pb::ListAccountsRequest>,
     ) -> Result<Response<pb::ListAccountsResponse>, Status> {
+        let req = request.into_inner();
         let fql = "GET trial_balance(2099-12-31) AS accounts";
-        let results = self.execute_fql(fql)?;
+        let results = self.execute_fql_with_entity(fql, &req.entity_id)?;
 
         let mut accounts = Vec::new();
         if let Some(result) = results.last() {
@@ -157,7 +186,7 @@ impl DblEntry for DblEntryService {
             _ => String::new(),
         };
         let fql = format!("GET balance(@{}, {}{}) AS result", req.account_id, req.date, dim);
-        let results = self.execute_fql(&fql)?;
+        let results = self.execute_fql_with_entity(&fql, &req.entity_id)?;
 
         let balance = results
             .last()
@@ -188,7 +217,7 @@ impl DblEntry for DblEntryService {
             "GET statement(@{}, {}, {}{}) AS result",
             req.account_id, req.from_date, req.to_date, dim
         );
-        let results = self.execute_fql(&fql)?;
+        let results = self.execute_fql_with_entity(&fql, &req.entity_id)?;
 
         let mut transactions = Vec::new();
         if let Some(result) = results.last() {
@@ -213,7 +242,7 @@ impl DblEntry for DblEntryService {
     ) -> Result<Response<pb::GetTrialBalanceResponse>, Status> {
         let req = request.into_inner();
         let fql = format!("GET trial_balance({}) AS result", req.date);
-        let results = self.execute_fql(fql.as_str())?;
+        let results = self.execute_fql_with_entity(fql.as_str(), &req.entity_id)?;
 
         let mut items = Vec::new();
         if let Some(result) = results.last() {
@@ -238,7 +267,7 @@ impl DblEntry for DblEntryService {
         let req = request.into_inner();
         validate_identifier(&req.id, "rate ID")?;
         let fql = format!("CREATE RATE {}", req.id);
-        self.execute_fql(&fql)?;
+        self.execute_fql_with_entity(&fql, &req.entity_id)?;
         Ok(Response::new(pb::CreateRateResponse { success: true }))
     }
 
@@ -249,7 +278,7 @@ impl DblEntry for DblEntryService {
         let req = request.into_inner();
         validate_identifier(&req.rate_id, "rate ID")?;
         let fql = format!("SET RATE {} {} {}", req.rate_id, req.value, req.date);
-        self.execute_fql(&fql)?;
+        self.execute_fql_with_entity(&fql, &req.entity_id)?;
         Ok(Response::new(pb::SetRateResponse { success: true }))
     }
 
@@ -292,7 +321,7 @@ impl DblEntry for DblEntryService {
             .collect();
         fql.push_str(&format!(" {}", ops.join(", ")));
 
-        self.execute_fql(&fql)?;
+        self.execute_fql_with_entity(&fql, &req.entity_id)?;
         Ok(Response::new(pb::CreateJournalResponse { success: true }))
     }
 

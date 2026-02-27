@@ -12,6 +12,7 @@ pub enum Statement{
     Get(GetExpression),
     Set(SetCommand),
     Accrue(AccrueCommand),
+    UseEntity(Arc<str>),
     Begin,
     Commit,
     Rollback,
@@ -22,6 +23,7 @@ pub enum CreateCommand {
     Account(AccountExpression),
     Journal(JournalExpression),
     Rate(CreateRateExpression),
+    Entity(Arc<str>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

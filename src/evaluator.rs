@@ -47,15 +47,16 @@ impl MyToString for QueryVariables {
 pub struct ExpressionEvaluationContext {
   effective_date: Date,
   variables: QueryVariables,
-  
+  entity_id: Arc<str>,
 }
 
 impl ExpressionEvaluationContext {
 
-  pub fn new(effective_date: Date, variables: QueryVariables) -> ExpressionEvaluationContext {
+  pub fn new(effective_date: Date, variables: QueryVariables, entity_id: Arc<str>) -> ExpressionEvaluationContext {
     ExpressionEvaluationContext {
         effective_date,
         variables,
+        entity_id,
     }
   }
 
@@ -78,7 +79,10 @@ impl ExpressionEvaluationContext {
     pub fn get_effective_date(&self) -> Date {
         self.effective_date
     }
-  
+
+    pub fn get_entity_id(&self) -> &str {
+        &self.entity_id
+    }
 }
 
 pub struct ExpressionEvaluator {
@@ -195,7 +199,7 @@ impl ExpressionEvaluator {
                 DataValue::Dimension((d.id.clone(), Arc::new(value)))
             }
             ast::UnaryExpression::Rate(rate) => {
-                let val = self.storage.get_rate(rate.as_ref(), context.get_effective_date())?;
+                let val = self.storage.get_rate(context.get_entity_id(), rate.as_ref(), context.get_effective_date())?;
                 DataValue::Percentage(val)
             },
         };

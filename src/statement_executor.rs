@@ -4,13 +4,14 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::{StorageBackend, TransactionId}, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::{StorageBackend, TransactionId, DEFAULT_ENTITY}, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
     pub effective_date: Date,
     pub variables: QueryVariables,
     pub transaction_id: Option<TransactionId>,
+    pub entity_id: Arc<str>,
 }
 
 impl ExecutionContext {
@@ -19,6 +20,7 @@ impl ExecutionContext {
             effective_date,
             variables,
             transaction_id: None,
+            entity_id: Arc::from(DEFAULT_ENTITY),
         }
     }
 }
@@ -59,7 +61,7 @@ impl Display for ExecutionResult {
 
 impl From<&ExecutionContext> for ExpressionEvaluationContext {
     fn from(val: &ExecutionContext) -> Self {
-        ExpressionEvaluationContext::new(val.effective_date, val.variables.clone())
+        ExpressionEvaluationContext::new(val.effective_date, val.variables.clone(), val.entity_id.clone())
     }
 }
 
@@ -82,11 +84,26 @@ impl StatementExecutor {
                 CreateCommand::Account(a) => self.create_account(context, a)?,
                 CreateCommand::Journal(j) => self.create_journal(context, j)?,
                 CreateCommand::Rate(r) => self.create_rate(context, r)?,
+                CreateCommand::Entity(name) => {
+                    self.storage.create_entity(name)?;
+                    tracing::debug!("Created entity: {}", name);
+                    ExecutionResult::new()
+                },
             },
             Statement::Get(get) => self.get(context, get)?,
             Statement::Accrue(accrue) => self.accrue(context, accrue)?,
             Statement::Set(s) => match s {
                 SetCommand::Rate(r) => self.set_rate(context, r)?,
+            },
+            Statement::UseEntity(name) => {
+                if !self.storage.entity_exists(name) {
+                    return Err(EvaluationError::StorageError(
+                        crate::storage::StorageError::EntityNotFound(name.to_string())
+                    ));
+                }
+                context.entity_id = name.clone();
+                tracing::debug!("Switched to entity: {}", name);
+                ExecutionResult::new()
             },
             Statement::Begin => {
                 let tx_id = self.storage.begin_transaction()?;
@@ -175,7 +192,7 @@ impl StatementExecutor {
             },
         };
 
-        self.storage.create_journal(&command)?;
+        self.storage.create_journal(&context.entity_id, &command)?;
         tracing::debug!("Created journal: {:?}", command);
 
         let mut result = ExecutionResult::new();        
@@ -222,21 +239,21 @@ impl StatementExecutor {
         Ok(entries)
     }
 
-    fn create_account(&self, _context: &ExecutionContext, account: &AccountExpression) -> Result<ExecutionResult, EvaluationError> {
+    fn create_account(&self, context: &ExecutionContext, account: &AccountExpression) -> Result<ExecutionResult, EvaluationError> {
         //let mut eval_ctx : ExpressionEvaluationContext = context.into();
 
-        self.storage.create_account(account)?;
+        self.storage.create_account(&context.entity_id, account)?;
 
         tracing::debug!("Created account: {:?}", account);
 
         Ok(ExecutionResult::new())
     }
 
-    fn create_rate(&self, _context: &ExecutionContext, rate: &CreateRateExpression) -> Result<ExecutionResult, EvaluationError> {
+    fn create_rate(&self, context: &ExecutionContext, rate: &CreateRateExpression) -> Result<ExecutionResult, EvaluationError> {
         let cmd = CreateRateCommand {
             id: rate.id.clone(),
         };
-        self.storage.create_rate(&cmd)?;
+        self.storage.create_rate(&context.entity_id, &cmd)?;
         tracing::debug!("Created rate: {:?}", rate);
 
         Ok(ExecutionResult::new())
@@ -262,7 +279,7 @@ impl StatementExecutor {
                 _ => return Err(EvaluationError::InvalidType),
             },
         };
-        self.storage.set_rate(&cmd)?;
+        self.storage.set_rate(&context.entity_id, &cmd)?;
         tracing::debug!("Set rate: {:?}", rate);
 
         Ok(ExecutionResult::new())
@@ -307,17 +324,17 @@ impl StatementExecutor {
 
         eval_ctx.set_effective_date(effective_date);
 
-        let dimension_values = self.storage.get_dimension_values(&accrue.account_id, accrue.by_dimension.clone(), start_date, end_date)?;
+        let dimension_values = self.storage.get_dimension_values(&context.entity_id, &accrue.account_id, accrue.by_dimension.clone(), start_date, end_date)?;
         let mut amounts = HashMap::new();
         
         let mut dt = start_date;
         while dt <= end_date {
             
-            let rate = self.storage.get_rate(&accrue.rate_id, dt)?;
+            let rate = self.storage.get_rate(&context.entity_id, &accrue.rate_id, dt)?;
             
             for dimension_value in &dimension_values {
                 let dim = (accrue.by_dimension.clone() ,dimension_value.clone());
-                let open = self.storage.get_balance(&accrue.account_id, dt, Some(&dim))?;
+                let open = self.storage.get_balance(&context.entity_id, &accrue.account_id, dt, Some(&dim))?;
                 
                 let accural = match amounts.get(dimension_value) {
                     Some(pv) => *pv,
@@ -350,7 +367,7 @@ impl StatementExecutor {
                 ledger_entries: self.build_ledger_entries(&eval_ctx, &accrue.into_journal.operations, amount)?, 
                 dimensions 
             };
-            self.storage.create_journal(&journal)?;
+            self.storage.create_journal(&context.entity_id, &journal)?;
             result.journals_created += 1;
         }
 

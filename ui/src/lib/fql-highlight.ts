@@ -18,7 +18,7 @@
 
 const KEYWORDS = new Set([
   'CREATE', 'GET', 'SET', 'ACCRUE', 'BEGIN', 'COMMIT', 'ROLLBACK',
-  'ACCOUNT', 'JOURNAL', 'RATE', 'BALANCE',
+  'ACCOUNT', 'JOURNAL', 'RATE', 'BALANCE', 'ENTITY', 'USE',
   'DEBIT', 'CREDIT',
   'COMPOUND', 'DAILY', 'CONTINUOUS',
   'FOR', 'FROM', 'TO', 'BY', 'INTO', 'WHERE', 'WITH', 'RETURN', 'AS', 'IN',

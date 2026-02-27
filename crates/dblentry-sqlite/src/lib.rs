@@ -177,7 +177,20 @@ fn data_value_to_str(dv: &DataValue) -> String {
 }
 
 impl StorageBackend for SqliteStorage {
-    fn create_account(&self, account: &AccountExpression) -> Result<(), StorageError> {
+    fn create_entity(&self, _entity_id: &str) -> Result<(), StorageError> {
+        // TODO: Add entities table and full entity support
+        Ok(())
+    }
+
+    fn list_entities(&self) -> Vec<Arc<str>> {
+        vec![Arc::from("default")]
+    }
+
+    fn entity_exists(&self, _entity_id: &str) -> bool {
+        true // SQLite currently only supports default entity
+    }
+
+    fn create_account(&self, _entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO accounts (id, account_type) VALUES (?1, ?2)",
@@ -187,14 +200,14 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
-    fn create_rate(&self, _rate: &CreateRateCommand) -> Result<(), StorageError> {
+    fn create_rate(&self, _entity_id: &str, _rate: &CreateRateCommand) -> Result<(), StorageError> {
         // Rates table uses (id, date) as PK; creating a rate just means it's available
         // No row needed until set_rate is called — but we validate existence on get_rate
         // Insert a marker if needed (not strictly necessary with our schema)
         Ok(())
     }
 
-    fn set_rate(&self, command: &SetRateCommand) -> Result<(), StorageError> {
+    fn set_rate(&self, _entity_id: &str, command: &SetRateCommand) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO rates (id, date, value) VALUES (?1, ?2, ?3)",
@@ -208,7 +221,7 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
-    fn get_rate(&self, id: &str, date: Date) -> Result<Decimal, StorageError> {
+    fn get_rate(&self, _entity_id: &str, id: &str, date: Date) -> Result<Decimal, StorageError> {
         let conn = self.conn.lock().unwrap();
         let result: Result<String, _> = conn.query_row(
             "SELECT value FROM rates WHERE id = ?1 AND date <= ?2 ORDER BY date DESC LIMIT 1",
@@ -223,7 +236,7 @@ impl StorageBackend for SqliteStorage {
         }
     }
 
-    fn create_journal(&self, command: &CreateJournalCommand) -> Result<(), StorageError> {
+    fn create_journal(&self, _entity_id: &str, command: &CreateJournalCommand) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         let jid = Uuid::new_v4().to_string();
         let seq = Self::next_sequence(&conn)?;
@@ -291,6 +304,7 @@ impl StorageBackend for SqliteStorage {
 
     fn get_balance(
         &self,
+        _entity_id: &str,
         account_id: &str,
         date: Date,
         dimension: Option<&(Arc<str>, Arc<DataValue>)>,
@@ -346,6 +360,7 @@ impl StorageBackend for SqliteStorage {
 
     fn get_statement(
         &self,
+        _entity_id: &str,
         account_id: &str,
         from: Bound<Date>,
         to: Bound<Date>,
@@ -482,6 +497,7 @@ impl StorageBackend for SqliteStorage {
 
     fn get_dimension_values(
         &self,
+        _entity_id: &str,
         account_id: &str,
         dimension_key: Arc<str>,
         from: Date,
@@ -511,7 +527,7 @@ impl StorageBackend for SqliteStorage {
         Ok(result)
     }
 
-    fn list_accounts(&self) -> Vec<(Arc<str>, AccountType)> {
+    fn list_accounts(&self, _entity_id: &str) -> Vec<(Arc<str>, AccountType)> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT id, account_type FROM accounts ORDER BY id")
@@ -579,13 +595,13 @@ mod tests {
 
         // Create accounts
         storage
-            .create_account(&AccountExpression {
+            .create_account("default", &AccountExpression {
                 id: Arc::from("bank"),
                 account_type: AccountType::Asset,
             })
             .unwrap();
         storage
-            .create_account(&AccountExpression {
+            .create_account("default", &AccountExpression {
                 id: Arc::from("equity"),
                 account_type: AccountType::Equity,
             })
@@ -609,16 +625,16 @@ mod tests {
             ],
             dimensions: BTreeMap::new(),
         };
-        storage.create_journal(&cmd).unwrap();
+        storage.create_journal("default", &cmd).unwrap();
 
         // Check balance
         let bal = storage
-            .get_balance("bank", date, None)
+            .get_balance("default", "bank", date, None)
             .unwrap();
         assert_eq!(bal, Decimal::from(1000));
 
         let eq_bal = storage
-            .get_balance("equity", date, None)
+            .get_balance("default", "equity", date, None)
             .unwrap();
         assert_eq!(eq_bal, Decimal::from(1000));
     }
@@ -628,13 +644,13 @@ mod tests {
         let storage = SqliteStorage::new(":memory:").unwrap();
 
         storage
-            .create_account(&AccountExpression {
+            .create_account("default", &AccountExpression {
                 id: Arc::from("bank"),
                 account_type: AccountType::Asset,
             })
             .unwrap();
         storage
-            .create_account(&AccountExpression {
+            .create_account("default", &AccountExpression {
                 id: Arc::from("equity"),
                 account_type: AccountType::Equity,
             })
@@ -644,7 +660,7 @@ mod tests {
 
         let tx_id = storage.begin_transaction().unwrap();
         storage
-            .create_journal(&CreateJournalCommand {
+            .create_journal("default", &CreateJournalCommand {
                 date,
                 description: Arc::from("Test"),
                 amount: Decimal::from(500),
@@ -663,7 +679,7 @@ mod tests {
             .unwrap();
         storage.rollback_transaction(tx_id).unwrap();
 
-        let bal = storage.get_balance("bank", date, None).unwrap();
+        let bal = storage.get_balance("default", "bank", date, None).unwrap();
         assert_eq!(bal, Decimal::ZERO, "Balance should be 0 after rollback");
     }
 }

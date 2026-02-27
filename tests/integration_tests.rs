@@ -1775,3 +1775,134 @@ fn test_account_id_validation() {
         v => panic!("Expected Money(100), got {:?}", v),
     }
 }
+
+// ==================== Multi-Entity Tests ====================
+
+/// Test that CREATE ENTITY and USE ENTITY work, and entities are isolated.
+#[test]
+fn test_multi_entity_isolation() {
+    let (exec, mut ctx) = setup();
+
+    // Create two entities
+    execute_script(&exec, &mut ctx, "
+        CREATE ENTITY 'Acme Corp';
+        CREATE ENTITY 'Beta Fund';
+    ");
+
+    // Set up accounts in Acme Corp
+    execute_script(&exec, &mut ctx, "
+        USE ENTITY 'Acme Corp';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE JOURNAL 2023-01-01, 50000, 'Acme investment'
+        CREDIT @equity, DEBIT @bank;
+    ");
+
+    // Set up same account names in Beta Fund with different amounts
+    execute_script(&exec, &mut ctx, "
+        USE ENTITY 'Beta Fund';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE JOURNAL 2023-01-01, 100000, 'Beta investment'
+        CREDIT @equity, DEBIT @bank;
+    ");
+
+    // Query Beta Fund (still active)
+    let beta_results = execute_script(&exec, &mut ctx, "
+        GET balance(@bank, 2023-12-31) AS beta_bank
+    ");
+    match &beta_results[0].variables["beta_bank"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(100000)),
+        v => panic!("Expected 100000 for Beta, got {:?}", v),
+    }
+
+    // Switch to Acme and verify its balance is separate
+    let acme_results = execute_script(&exec, &mut ctx, "
+        USE ENTITY 'Acme Corp';
+        GET balance(@bank, 2023-12-31) AS acme_bank
+    ");
+    match &acme_results[1].variables["acme_bank"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(50000)),
+        v => panic!("Expected 50000 for Acme, got {:?}", v),
+    }
+}
+
+/// Test that the default entity works for backward compatibility.
+#[test]
+fn test_default_entity_backward_compat() {
+    let (exec, mut ctx) = setup();
+
+    // No USE ENTITY — should work against "default"
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE JOURNAL 2023-01-01, 1000, 'Test'
+        CREDIT @equity, DEBIT @bank;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@bank, 2023-12-31) AS bal
+    ");
+    match &results[0].variables["bal"] {
+        DataValue::Money(m) => assert_eq!(*m, rust_decimal::Decimal::from(1000)),
+        v => panic!("Expected 1000, got {:?}", v),
+    }
+}
+
+/// Test that USE ENTITY with a non-existent entity returns an error.
+#[test]
+fn test_use_nonexistent_entity() {
+    let (exec, mut ctx) = setup();
+
+    let statements = lexer::parse("USE ENTITY 'does_not_exist'").unwrap();
+    let result = exec.execute(&mut ctx, &statements[0]);
+    assert!(result.is_err(), "USE ENTITY on non-existent entity should fail");
+}
+
+/// Test that CREATE ENTITY with a duplicate name returns an error.
+#[test]
+fn test_create_duplicate_entity() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "CREATE ENTITY 'Acme Corp'");
+    let statements = lexer::parse("CREATE ENTITY 'Acme Corp'").unwrap();
+    let result = exec.execute(&mut ctx, &statements[0]);
+    assert!(result.is_err(), "Creating duplicate entity should fail");
+}
+
+/// Test multi-entity trial balance isolation.
+#[test]
+fn test_multi_entity_trial_balance() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ENTITY 'Entity A';
+        USE ENTITY 'Entity A';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE JOURNAL 2023-01-01, 10000, 'Capital' CREDIT @equity, DEBIT @bank;
+        CREATE JOURNAL 2023-06-01, 5000, 'Sales' CREDIT @revenue, DEBIT @bank;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET trial_balance(2023-12-31) AS tb,
+            account_count() AS count
+    ");
+
+    match &results[0].variables["count"] {
+        DataValue::Int(n) => assert_eq!(*n, 3, "Entity A should have 3 accounts"),
+        v => panic!("Expected Int(3), got {:?}", v),
+    }
+    assert_trial_balance_balanced(&results[0].variables["tb"], "Entity A");
+
+    // Default entity should have 0 accounts
+    let default_results = execute_script(&exec, &mut ctx, "
+        USE ENTITY 'default';
+        GET account_count() AS count
+    ");
+    match &default_results[1].variables["count"] {
+        DataValue::Int(n) => assert_eq!(*n, 0, "Default entity should have 0 accounts"),
+        v => panic!("Expected Int(0), got {:?}", v),
+    }
+}

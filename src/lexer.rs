@@ -64,6 +64,8 @@ peg::parser! {
         rule kw_begin()     = ("BEGIN" / "begin")
         rule kw_commit()    = ("COMMIT" / "commit")
         rule kw_rollback()  = ("ROLLBACK" / "rollback")
+        rule kw_entity()    = ("ENTITY" / "entity")
+        rule kw_use()       = ("USE" / "use")
 
         rule _()
             = [' ']
@@ -267,12 +269,14 @@ peg::parser! {
             })}
 
         rule create_command() -> CreateCommand
-            = kw_create() __* journal:journal()  { CreateCommand::Journal(journal) }
+            = kw_create() __+ kw_entity() __+ name:text()  { CreateCommand::Entity(name) }
+            / kw_create() __* journal:journal()  { CreateCommand::Journal(journal) }
             / kw_create() __* account:account()  { CreateCommand::Account(account) }
             / kw_create() __* rate:rate()  { CreateCommand::Rate(rate) }
         
         pub rule statement() -> Statement
             = c:create_command() { Statement::Create(c) }
+            / kw_use() __+ kw_entity() __+ name:text() { Statement::UseEntity(name) }
             / kw_get() __+ e:projection_expression() ** (__* "," __*) { Statement::Get(GetExpression::get(e)) }
             / s:set_command() { Statement::Set(s) }
             / a:accrue_command() { Statement::Accrue(a) }

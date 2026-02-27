@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     function_registry.register_function("min", Function::Scalar(Arc::new(Min)));
     function_registry.register_function("max", Function::Scalar(Arc::new(Max)));
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
-    let exec = StatementExecutor::new(expression_evaluator, storage);
+    let exec = StatementExecutor::new(expression_evaluator, storage.clone());
     let state = Arc::new(exec);
     
     let auth_config = Arc::new(config.auth.clone());
@@ -122,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let grpc_addr = format!("{}:{}", config.server.host, config.grpc.port)
             .parse()
             .expect("Invalid gRPC listen address");
-        let grpc_service = DblEntryService::new(state.clone());
+        let grpc_service = DblEntryService::new(state.clone(), storage.clone());
         tracing::info!("DblEntry gRPC listening on {}", grpc_addr);
 
         let grpc_server = tonic::transport::Server::builder()
