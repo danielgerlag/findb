@@ -58,7 +58,7 @@
       <!-- FQL Preview -->
       <div v-if="fqlPreview" style="margin-top: 1rem;">
         <h3>Generated FQL</h3>
-        <pre style="background: var(--bg-surface); padding: 0.75rem; border-radius: 6px; font-size: 0.85rem; border: 1px solid var(--border);">{{ fqlPreview }}</pre>
+        <pre class="fql-preview"><code><span v-for="(line, i) in highlightedPreview" :key="i" v-html="line + '\n'"></span></code></pre>
       </div>
 
       <div class="toolbar" style="margin-top: 1rem;">
@@ -77,6 +77,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { executeFql, escapeFql } from '../api/client'
+import { highlightFqlLines } from '../lib/fql-highlight'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
@@ -121,6 +122,8 @@ const fqlPreview = computed(() => {
   return fql
 })
 
+const highlightedPreview = computed(() => highlightFqlLines(fqlPreview.value))
+
 async function submit() {
   if (!fqlPreview.value) return
   loading.value = true
@@ -158,3 +161,29 @@ function reset() {
   success.value = false
 }
 </script>
+
+<style scoped>
+.fql-preview {
+  background: #0f172a;
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #e2e8f0;
+  overflow-x: auto;
+}
+.fql-preview code { font-family: inherit; }
+:deep(.fql-keyword) { color: #c084fc; font-weight: 500; }
+:deep(.fql-type) { color: #67e8f9; font-weight: 500; }
+:deep(.fql-account) { color: #34d399; }
+:deep(.fql-string) { color: #fbbf24; }
+:deep(.fql-number) { color: #fb923c; }
+:deep(.fql-date) { color: #60a5fa; }
+:deep(.fql-operator) { color: #94a3b8; }
+:deep(.fql-comment) { color: #64748b; font-style: italic; }
+:deep(.fql-function) { color: #38bdf8; }
+:deep(.fql-param) { color: #f472b6; }
+:deep(.fql-punctuation) { color: #94a3b8; }
+:deep(.fql-bool) { color: #fb923c; font-weight: 500; }
+</style>

@@ -2,13 +2,14 @@
   <div class="tour-code-block">
     <pre ref="codeEl"><code><template v-for="(line, i) in displayLines" :key="i"><span
       :class="lineClasses(i)"
-    ><span class="line-num">{{ i + 1 }}</span><span v-html="highlightLine(line)"></span>
+    ><span class="line-num">{{ i + 1 }}</span><span v-html="renderLine(line)"></span>
 </span></template></code></pre>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted } from 'vue'
+import { highlightFql } from '../../lib/fql-highlight'
 
 const props = withDefaults(defineProps<{
   code: string
@@ -45,16 +46,19 @@ function lineClasses(lineIdx: number): Record<string, boolean> {
   }
 }
 
-function highlightLine(line: string): string {
-  if (!props.highlight || props.highlight.length === 0) return line
-  let result = line
-  for (const token of props.highlight) {
-    if (token.startsWith('lines:')) continue
-    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    result = result.replace(
-      new RegExp(`(${escaped})`, 'g'),
-      '<mark class="fqlt-highlight">$1</mark>'
-    )
+function renderLine(line: string): string {
+  // First apply syntax highlighting
+  let result = highlightFql(line)
+  // Then layer on tour highlights (mark tags) if any
+  if (props.highlight && props.highlight.length > 0) {
+    for (const token of props.highlight) {
+      if (token.startsWith('lines:')) continue
+      const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      result = result.replace(
+        new RegExp(`(${escaped})`, 'g'),
+        '<mark class="fqlt-highlight">$1</mark>'
+      )
+    }
   }
   return result
 }
@@ -114,7 +118,7 @@ pre {
   font-size: 0.875rem;
   line-height: 1.6;
 }
-code { color: #f1f5f9; }
+code { color: #e2e8f0; }
 .code-line { display: block; }
 .code-line.dimmed { opacity: 0.3; }
 .line-num {
@@ -125,6 +129,19 @@ code { color: #f1f5f9; }
   color: #64748b;
   user-select: none;
 }
+/* FQL syntax colors */
+:deep(.fql-keyword) { color: #c084fc; font-weight: 500; }
+:deep(.fql-type) { color: #67e8f9; font-weight: 500; }
+:deep(.fql-account) { color: #34d399; }
+:deep(.fql-string) { color: #fbbf24; }
+:deep(.fql-number) { color: #fb923c; }
+:deep(.fql-date) { color: #60a5fa; }
+:deep(.fql-operator) { color: #94a3b8; }
+:deep(.fql-comment) { color: #64748b; font-style: italic; }
+:deep(.fql-function) { color: #38bdf8; }
+:deep(.fql-param) { color: #f472b6; }
+:deep(.fql-punctuation) { color: #94a3b8; }
+:deep(.fql-bool) { color: #fb923c; font-weight: 500; }
 :deep(.fqlt-highlight) {
   background: rgba(250, 204, 21, 0.3);
   color: #fbbf24;
