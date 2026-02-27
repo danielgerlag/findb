@@ -1,0 +1,108 @@
+---
+title: "Building a Lending Fund"
+description: "Learn double-entry bookkeeping by building a lending fund with investor equity, loan issuance, and interest accrual."
+author: "DblEntry Team"
+difficulty: beginner
+tags: [lending, accruals, interest, dimensions]
+version: 1
+---
+
+--@ step: Setting Up the Chart of Accounts
+--@ text: Every accounting system starts with a **chart of accounts**.
+--@   We need four accounts for our lending fund:
+--@   - **bank** — where cash lives (an asset)
+--@   - **loans** — outstanding loan balances (also an asset)
+--@   - **interest_earned** — income from charging interest
+--@   - **equity** — capital invested by fund investors
+--@ highlight: ASSET, EQUITY, INCOME
+--@ expect: 4 accounts created
+
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @loans ASSET;
+CREATE ACCOUNT @interest_earned INCOME;
+CREATE ACCOUNT @equity EQUITY;
+
+--@ step: Defining the Interest Rate
+--@ text: DblEntry tracks **rates** over time. We create a rate called
+--@   `prime` and set it to **5%** starting January 1st.
+--@   Later, we can update the rate and DblEntry will automatically
+--@   use the correct value for each date range.
+--@ highlight: prime, 0.05
+--@ note: Rates aren't just for interest — you can use them for
+--@   tax rates, FX rates, discount rates, or any time-varying value.
+
+CREATE RATE prime;
+SET RATE prime 0.05 2023-01-01;
+
+--@ step: Recording an Investment
+--@ text: An investor deposits **$20,000** into the fund.
+--@   Notice the `FOR Investor='John Doe'` clause — this is a
+--@   **dimension**. It lets us track balances on the equity account
+--@   segmented per investor, without creating separate accounts.
+--@ highlight: FOR, Investor
+--@ note: You can add as many dimensions as you need.
+--@   Common examples: Customer, Region, Department, Project, Currency.
+
+CREATE JOURNAL
+    2023-01-01, 20000, 'Investment'
+FOR
+    Investor='John Doe'
+CREDIT @equity,
+DEBIT @bank;
+
+--@ step: Issuing Loans
+--@ text: We issue two loans — **$1,000** to John and **$500** to Joe.
+--@   Each loan is tagged with `Customer` and `Region` dimensions
+--@   so we can query balances from multiple angles.
+--@ expect: 2 journals created
+
+CREATE JOURNAL
+    2023-02-01, 1000, 'Loan Issued'
+FOR
+    Customer='John Doe',
+    Region='US'
+DEBIT @loans,
+CREDIT @bank;
+
+CREATE JOURNAL
+    2023-02-01, 500, 'Loan Issued'
+FOR
+    Customer='Joe Soap',
+    Region='US'
+DEBIT @loans,
+CREDIT @bank;
+
+--@ step: Accruing Interest
+--@ text: This is where DblEntry shines. A single `ACCRUE` statement:
+--@   1. Reads every customer's daily loan balance for February
+--@   2. Applies the `prime` rate with **daily compounding**
+--@   3. Creates one journal entry per customer on March 1st
+--@
+--@   If the rate had changed mid-month, DblEntry would automatically
+--@   split the calculation at the rate-change boundary.
+--@ highlight: ACCRUE, COMPOUND DAILY, BY Customer
+--@ reveal: line-by-line
+--@ pause: 5
+
+ACCRUE @loans FROM 2023-02-01 TO 2023-02-28
+WITH RATE prime COMPOUND DAILY
+BY Customer
+INTO JOURNAL
+    2023-03-01, 'Interest'
+DEBIT @loans,
+CREDIT @interest_earned;
+
+--@ step: Viewing the Results
+--@ text: Let's pull it all together. We'll get:
+--@   - A **statement** for each customer showing their transactions
+--@   - The **total loan book** balance
+--@   - A **trial balance** for the entire fund (debits should equal credits)
+--@ show: John, Joe, Total, TrialBalance
+--@ assert: Total = 1506.34
+--@ layout: split
+
+GET
+    statement(@loans, 2023-02-01, 2023-03-01, Customer='John Doe') as John,
+    statement(@loans, 2023-02-01, 2023-03-01, Customer='Joe Soap') as Joe,
+    balance(@loans, 2023-03-01) AS Total,
+    trial_balance(2023-03-01) AS TrialBalance

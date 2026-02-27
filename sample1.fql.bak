@@ -1,0 +1,46 @@
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @loans ASSET;
+CREATE ACCOUNT @interest_earned INCOME;
+CREATE ACCOUNT @equity EQUITY;
+
+
+CREATE RATE prime;
+SET RATE prime 0.05 2023-01-01;
+
+CREATE JOURNAL 
+    2023-01-01, 20000, 'Investment'
+FOR
+    Investor='John Doe'
+CREDIT @equity,
+DEBIT @bank;
+
+CREATE JOURNAL 
+    2023-02-01, 1000, 'Loan Issued'
+FOR
+    Customer='John Doe',
+    Region='US'
+DEBIT @loans,
+CREDIT @bank;
+
+CREATE JOURNAL 
+    2023-02-01, 500, 'Loan Issued'
+FOR
+    Customer='Joe Soap',
+    Region='US'
+DEBIT @loans,
+CREDIT @bank;
+
+ACCRUE @loans FROM 2023-02-01 TO 2023-02-28
+WITH RATE prime COMPOUND DAILY
+BY Customer
+INTO JOURNAL
+    2023-03-01, 'Interest'
+DEBIT @loans,
+CREDIT @interest_earned;
+
+
+GET 
+    statement(@loans, 2023-02-01, 2023-03-01, Customer='John Doe') as John,
+    statement(@loans, 2023-02-01, 2023-03-01, Customer='Joe Soap') as Joe,
+    balance(@loans, 2023-03-01) AS Total,
+    trial_balance(2023-03-01) AS TrialBalance
