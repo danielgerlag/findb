@@ -17,6 +17,7 @@ Most financial applications implement accounting logic in application code scatt
 ## Features
 
 - **FQL (Finance Query Language)** — Domain-specific language for financial operations
+- **AI-agent friendly** — Small, deterministic grammar that fits in a system prompt; ideal for LLM tool-use
 - **Layer 2 architecture** — Pluggable storage backends; bring your own SQLite or PostgreSQL
 - **Double-entry bookkeeping** — Every transaction debits and credits balanced accounts
 - **Dimension-based indexing** — Slice data by any combination of tags (Customer, Region, etc.)
@@ -30,6 +31,29 @@ Most financial applications implement accounting logic in application code scatt
 - **Configurable** — TOML config file, CLI args, environment variable support
 - **Multi-currency** — FX rate conversion functions (`convert`, `fx_rate`)
 - **Built-in functions** — `balance`, `statement`, `trial_balance`, `income_statement`, `convert`, `round`, `abs`, `min`, `max`
+
+### Built for AI Agents
+
+FQL is a small, deterministic language with a constrained grammar — exactly the kind of interface that LLMs and AI agents excel at generating. Unlike raw SQL, where an agent must reason about schema design, join strategies, and transaction isolation, FQL exposes financial operations as high-level primitives:
+
+```sql
+-- An agent can express "record a $500 sale for Acme in the US region" as:
+CREATE JOURNAL 2024-03-15, 500, 'Sale'
+FOR Customer='Acme', Region='US'
+CREDIT @revenue, DEBIT @bank;
+
+-- "What's Acme's balance?" becomes:
+GET balance(@receivables, 2024-03-15, Customer='Acme') AS result;
+
+-- "Accrue interest on all loans for February" becomes:
+ACCRUE @loans FROM 2024-02-01 TO 2024-02-29
+WITH RATE prime COMPOUND DAILY
+BY Customer
+INTO JOURNAL 2024-03-01, 'Interest'
+DEBIT @loans, CREDIT @interest_earned;
+```
+
+The entire language fits in a single system prompt. There are no tables to `CREATE`, no schemas to manage, no `INSERT INTO ... SELECT` chains to orchestrate. An agent that knows the handful of FQL verbs (`CREATE ACCOUNT`, `CREATE JOURNAL`, `GET`, `ACCRUE`, `SET RATE`) can perform any accounting operation — and the double-entry invariants are enforced by DblEntry, not by the agent. This makes FQL a natural tool-use interface for financial AI workflows.
 
 ## Quick Start
 
