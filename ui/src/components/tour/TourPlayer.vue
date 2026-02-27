@@ -90,7 +90,8 @@ function startStep() {
 }
 
 function onCodeRevealed() {
-  maybeAutoExecute()
+  // Reveal is done — execute directly (bypass the reveal guard in maybeAutoExecute)
+  executeCurrentStep()
 }
 
 function maybeAutoExecute() {
@@ -145,7 +146,8 @@ function goNext() {
     return
   }
   if (stepState.value === 'code-reveal') {
-    maybeAutoExecute()
+    // User clicked Next — skip remaining reveal and execute
+    executeCurrentStep()
     return
   }
   advanceStep()

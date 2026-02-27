@@ -2,7 +2,7 @@
   <div class="tour-code-block">
     <pre ref="codeEl"><code><template v-for="(line, i) in displayLines" :key="i"><span
       :class="lineClasses(i)"
-    ><span class="line-num">{{ i + 1 }}</span>{{ highlightLine(line) }}
+    ><span class="line-num">{{ i + 1 }}</span><span v-html="highlightLine(line)"></span>
 </span></template></code></pre>
   </div>
 </template>

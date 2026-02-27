@@ -103,6 +103,17 @@ GET trial_balance(2023-12-31) AS tb
     expect(tour.steps[1]!.code).toBe('CREATE ACCOUNT @equity EQUITY;')
   })
 
+  it('handles bare --@ as paragraph spacer in text', () => {
+    const tour = parseTour(`--@ step: Test
+--@ text: Line one
+--@
+--@   Line three after blank
+CREATE ACCOUNT @bank ASSET;
+`)
+    expect(tour.steps[0]!.text).toBe('Line one\n\nLine three after blank')
+    expect(tour.steps[0]!.code).toBe('CREATE ACCOUNT @bank ASSET;')
+  })
+
   it('creates implicit step for code before any step directive', () => {
     const tour = parseTour(`CREATE ACCOUNT @bank ASSET;
 CREATE ACCOUNT @equity EQUITY;

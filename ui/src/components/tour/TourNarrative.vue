@@ -11,7 +11,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import snarkdown from 'snarkdown'
+import { marked } from 'marked'
 
 const props = defineProps<{
   text?: string
@@ -19,8 +19,9 @@ const props = defineProps<{
   caption?: string
 }>()
 
-const renderedText = computed(() => props.text ? snarkdown(props.text) : '')
-const renderedNote = computed(() => props.note ? snarkdown(props.note) : '')
+// Configure marked for inline rendering (no wrapping <p> tags)
+const renderedText = computed(() => props.text ? marked.parse(props.text) as string : '')
+const renderedNote = computed(() => props.note ? marked.parse(props.note) as string : '')
 </script>
 
 <style scoped>

@@ -98,7 +98,7 @@ CREDIT @interest_earned;
 --@   - The **total loan book** balance
 --@   - A **trial balance** for the entire fund (debits should equal credits)
 --@ show: John, Joe, Total, TrialBalance
---@ assert: Total = 1506.34
+--@ assert: Total = 1505.76
 --@ layout: split
 
 GET

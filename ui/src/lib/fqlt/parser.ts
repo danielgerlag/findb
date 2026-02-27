@@ -26,6 +26,14 @@ export function parseTour(source: string): Tour {
       continue
     }
 
+    // Bare --@ line (empty continuation / paragraph spacer in text)
+    if (line.match(/^--@\s*$/)) {
+      if (current && lastDirective) {
+        appendDirective(current, lastDirective, '')
+      }
+      continue
+    }
+
     const dirMatch = line.match(/^--@\s*(\w[\w-]*):\s*(.*)$/)
     if (dirMatch) {
       const key = dirMatch[1]!

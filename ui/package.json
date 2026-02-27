@@ -12,10 +12,10 @@
     "@primeuix/themes": "^2.0.3",
     "@primevue/themes": "^4.5.4",
     "chart.js": "^4.5.1",
+    "marked": "^17.0.3",
     "pinia": "^3.0.4",
     "primeicons": "^7.0.0",
     "primevue": "^4.5.4",
-    "snarkdown": "^2.0.0",
     "vue": "^3.5.25",
     "vue-router": "^4.6.4"
   },
