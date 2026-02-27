@@ -1,26 +1,33 @@
 # DblEntry
 
-DblEntry is a domain specific database for finance. It is an open-source accounting primitive, a building block upon which financial products can be built. It natively supports double-entry bookkeeping, multi-currency transactions, complex tax rules, and various accounting standards. It maintains specialized indexes tuned for financial use cases that enable fast and accurate queries and calculations.
+**A Layer 2 database for double-entry bookkeeping.**
 
-DblEntry is not just a data store. It also provides a domain specific query language (FQL) crafted for financial use cases, that is expressive, concise, and intuitive. It is based on the principles of double-entry bookkeeping and supports common financial concepts, such as accounts, journals, debits, credits, adjustments, reversals, accruals, deferrals, allocations, budgets, forecasts, and reports.  It enables developers and non-developers alike to perform complex financial operations and analyses with simple and readable syntax, such as calculating interest with fluctuating rates, amortization, cash flow, net present value, internal rate of return, and more. 
+DblEntry is an open-source accounting engine that sits on top of your existing database infrastructure. Rather than replacing your primary data store, it acts as a specialized **Layer 2** — you bring your own storage (SQLite, PostgreSQL, or in-memory) and DblEntry adds a purpose-built financial data model, query language, and accounting logic on top.
 
-DblEntry is an accounting ledger at its core, so standardized financial concepts and statements (balance sheet, income statement, etc..) are native to the platform.
+Think of it like a domain-specific compute layer: your Layer 1 database handles persistence and durability, while DblEntry provides the financial semantics — double-entry bookkeeping, dimensional indexing, ACID journal entries, accrual calculations, and multi-currency support — through a dedicated query language called FQL.
+
+### Why Layer 2?
+
+Most financial applications implement accounting logic in application code scattered across services, ORMs, and stored procedures. This leads to duplicated balance calculations, ad-hoc ledger consistency checks, and fragile reporting pipelines. DblEntry consolidates all of that into a single layer that enforces double-entry invariants, maintains specialized indexes tuned for financial queries, and exposes a concise DSL for operations that would otherwise require hundreds of lines of SQL.
+
+- **Your database stays your database.** DblEntry delegates persistence to SQLite or PostgreSQL — it doesn't compete with your existing infrastructure.
+- **Financial logic lives in one place.** Accounts, journals, balances, statements, accruals, and trial balances are native primitives, not application-level abstractions.
+- **FQL replaces boilerplate.** A single `ACCRUE` statement does what would take a multi-step pipeline of queries, calculations, and inserts in a traditional setup.
 
 ## Features
 
 - **FQL (Finance Query Language)** — Domain-specific language for financial operations
+- **Layer 2 architecture** — Pluggable storage backends; bring your own SQLite or PostgreSQL
 - **Double-entry bookkeeping** — Every transaction debits and credits balanced accounts
 - **Dimension-based indexing** — Slice data by any combination of tags (Customer, Region, etc.)
 - **Variable rate accruals** — Compound interest calculations with fluctuating rates
 - **Decimal precision** — Uses `rust_decimal` for exact monetary arithmetic (no floating-point errors)
 - **ACID transactions** — `BEGIN` / `COMMIT` / `ROLLBACK` with implicit transaction wrapping
 - **Immutable ledger** — Append-only journal entries with sequence numbers and timestamps
-- **REST API** — Full REST API alongside FQL-over-HTTP
-- **gRPC API** — Protocol Buffers service on a configurable port (tonic)
+- **REST & gRPC APIs** — Full REST API, FQL-over-HTTP, and Protocol Buffers service
 - **Authentication** — API key-based auth with role support (admin/writer/reader)
 - **Observability** — Structured logging (tracing), Prometheus metrics (`/metrics`), health checks
 - **Configurable** — TOML config file, CLI args, environment variable support
-- **Pluggable storage** — In-memory (default), SQLite, or PostgreSQL for persistence
 - **Multi-currency** — FX rate conversion functions (`convert`, `fx_rate`)
 - **Built-in functions** — `balance`, `statement`, `trial_balance`, `income_statement`, `convert`, `round`, `abs`, `min`, `max`
 

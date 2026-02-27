@@ -4,7 +4,7 @@ use clap::Parser;
 use serde::Deserialize;
 
 #[derive(Parser, Debug)]
-#[command(name = "dblentry", about = "DblEntry - Domain specific database for double-entry bookkeeping")]
+#[command(name = "dblentry", about = "DblEntry - A Layer 2 database for double-entry bookkeeping")]
 pub struct CliArgs {
     /// Path to config file
     #[arg(short, long, default_value = "dblentry.toml")]
