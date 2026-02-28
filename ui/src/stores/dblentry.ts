@@ -24,6 +24,9 @@ export const useDblEntryStore = defineStore('dblentry', () => {
         error.value = resp.error || 'Unknown error'
         return
       }
+      // Reset before parsing — ensures stale data is cleared
+      trialBalance.value = []
+      accountCount.value = 0
       for (const result of resp.results) {
         const tb = parseTrialBalance(result)
         if (tb.length > 0) {
