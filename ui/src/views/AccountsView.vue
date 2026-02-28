@@ -80,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { executeFql, parseTrialBalance, parseStatement, escapeFql, type TrialBalanceItem, type StatementTxn } from '../api/client'
 import { useEntityStore } from '../stores/entity'
 import DataTable from 'primevue/datatable'
@@ -180,4 +180,5 @@ async function doCreate() {
 }
 
 onMounted(loadAccounts)
+watch(() => entityStore.activeEntity, () => loadAccounts())
 </script>

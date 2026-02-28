@@ -65,6 +65,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
 import Button from 'primevue/button'
+import { useEntityStore } from '../../stores/entity'
 
 const props = defineProps<{
   suggestedName: string
@@ -75,6 +76,7 @@ const emit = defineEmits<{
   (e: 'cancel'): void
 }>()
 
+const entityStore = useEntityStore()
 const entities = ref<string[]>([])
 const loading = ref(true)
 const creating = ref(false)
@@ -128,6 +130,8 @@ async function confirm() {
         errorMsg.value = data.error || 'Failed to create entity'
         return
       }
+      // Refresh the global entity store so the sidebar dropdown updates
+      await entityStore.fetchEntities()
       emit('select', name)
     } catch (e: any) {
       errorMsg.value = e.message || 'Connection error'
