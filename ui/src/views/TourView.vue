@@ -17,6 +17,21 @@
           <p>Learn double-entry bookkeeping by building a lending fund with investor equity, loan issuance, and interest accrual.</p>
           <span class="tour-tag">beginner</span>
         </div>
+        <div class="tour-card" @click="loadTour('ecommerce')">
+          <h4>🛒 Running an E-Commerce Store</h4>
+          <p>Track revenue, cost of goods sold, sales tax, inventory, and refunds for an online store.</p>
+          <span class="tour-tag">beginner</span>
+        </div>
+        <div class="tour-card" @click="loadTour('saas-subscriptions')">
+          <h4>💳 SaaS Subscription Billing</h4>
+          <p>Model monthly recurring revenue, deferred revenue, and revenue recognition for a SaaS business.</p>
+          <span class="tour-tag">intermediate</span>
+        </div>
+        <div class="tour-card" @click="loadTour('property-management')">
+          <h4>🏠 Property Management</h4>
+          <p>Manage rental properties with tenant tracking, security deposits, rent collection, and maintenance expenses.</p>
+          <span class="tour-tag">intermediate</span>
+        </div>
       </div>
     </div>
 

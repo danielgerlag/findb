@@ -1,0 +1,135 @@
+---
+title: "SaaS Subscription Billing"
+description: "Model monthly recurring revenue, deferred revenue, and revenue recognition for a SaaS business."
+author: "DblEntry Team"
+difficulty: intermediate
+tags: [saas, subscriptions, deferred-revenue, mrr, accruals]
+version: 1
+---
+
+--@ step: Setting Up the Chart of Accounts
+--@ text: A SaaS business needs accounts to handle the timing difference
+--@   between when customers **pay** and when revenue is **earned**:
+--@   - **bank** — cash received (asset)
+--@   - **accounts_receivable** — invoiced but not yet paid (asset)
+--@   - **deferred_revenue** — cash received for future service (liability)
+--@   - **subscription_revenue** — earned monthly revenue (income)
+--@   - **hosting_expense** — infrastructure costs (expense)
+--@   - **owner_equity** — owner's investment (equity)
+--@ note: Deferred revenue is a **liability** because you owe the customer
+--@   the service they've paid for. As you deliver the service each month,
+--@   you "recognize" the revenue by moving it from deferred to earned.
+
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @accounts_receivable ASSET;
+CREATE ACCOUNT @deferred_revenue LIABILITY;
+CREATE ACCOUNT @subscription_revenue INCOME;
+CREATE ACCOUNT @hosting_expense EXPENSE;
+CREATE ACCOUNT @owner_equity EQUITY;
+
+--@ step: Initial Funding
+--@ text: The founder invests **$100,000** to get the business started.
+
+CREATE JOURNAL 2024-01-01, 100000, 'Founder seed investment'
+  DEBIT @bank,
+  CREDIT @owner_equity;
+
+--@ step: Annual Subscription Payments
+--@ text: Three customers sign up for annual plans. They each pay upfront
+--@   for a full year of service. We can't recognize this as revenue yet —
+--@   it goes to **deferred revenue** (a liability).
+--@
+--@   Each customer is tagged with a `Customer` dimension so we can track
+--@   revenue recognition per customer.
+--@ highlight: deferred_revenue
+--@ note: Annual plan = 12 months × monthly rate.
+--@   Acme pays $12,000/yr ($1,000/mo), Globex pays $6,000/yr ($500/mo),
+--@   Initech pays $3,600/yr ($300/mo).
+
+CREATE JOURNAL 2024-01-05, 12000, 'Annual subscription - Acme Corp'
+  FOR Customer='Acme'
+  DEBIT @bank,
+  CREDIT @deferred_revenue;
+
+CREATE JOURNAL 2024-01-10, 6000, 'Annual subscription - Globex Inc'
+  FOR Customer='Globex'
+  DEBIT @bank,
+  CREDIT @deferred_revenue;
+
+CREATE JOURNAL 2024-01-12, 3600, 'Annual subscription - Initech'
+  FOR Customer='Initech'
+  DEBIT @bank,
+  CREDIT @deferred_revenue;
+
+--@ step: Monthly Revenue Recognition — January
+--@ text: At the end of January, we've delivered one month of service.
+--@   We move **1/12th** of each customer's annual payment from
+--@   deferred revenue to earned revenue.
+--@
+--@   This is called **revenue recognition** — matching revenue to the
+--@   period in which the service was delivered.
+--@ highlight: deferred_revenue, subscription_revenue
+
+CREATE JOURNAL 2024-01-31, 1000, 'Jan revenue recognition - Acme'
+  FOR Customer='Acme'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+CREATE JOURNAL 2024-01-31, 500, 'Jan revenue recognition - Globex'
+  FOR Customer='Globex'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+CREATE JOURNAL 2024-01-31, 300, 'Jan revenue recognition - Initech'
+  FOR Customer='Initech'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+--@ step: Recording Monthly Expenses
+--@ text: Every month there are infrastructure costs.
+--@   January hosting costs **$2,500**.
+
+CREATE JOURNAL 2024-01-31, 2500, 'January hosting infrastructure'
+  DEBIT @hosting_expense,
+  CREDIT @bank;
+
+--@ step: February Revenue Recognition
+--@ text: Another month of service delivered — recognize February's revenue.
+--@   The pattern repeats every month until the subscriptions expire.
+
+CREATE JOURNAL 2024-02-29, 1000, 'Feb revenue recognition - Acme'
+  FOR Customer='Acme'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+CREATE JOURNAL 2024-02-29, 500, 'Feb revenue recognition - Globex'
+  FOR Customer='Globex'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+CREATE JOURNAL 2024-02-29, 300, 'Feb revenue recognition - Initech'
+  FOR Customer='Initech'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+CREATE JOURNAL 2024-02-29, 2500, 'February hosting infrastructure'
+  DEBIT @hosting_expense,
+  CREDIT @bank;
+
+--@ step: Financial Reports
+--@ text: After two months, let's analyze the business:
+--@   - **MRR** (Monthly Recurring Revenue) — total recognized this month
+--@   - **Deferred revenue** — how much service we still owe
+--@   - **Income statement** — revenue minus expenses = profit
+--@   - **Per-customer revenue** — using dimension queries
+--@   - **Cash position** — how much cash we have
+--@ highlight: income_statement, trial_balance, balance
+
+GET trial_balance(2024-02-29) AS TrialBalance,
+    income_statement(2024-01-01, 2024-02-29) AS PnL,
+    balance(@deferred_revenue, 2024-02-29) AS RemainingDeferred,
+    balance(@subscription_revenue, 2024-02-29) AS TotalRecognized,
+    balance(@subscription_revenue, 2024-02-29, Customer='Acme') AS AcmeRevenue,
+    balance(@subscription_revenue, 2024-02-29, Customer='Globex') AS GlobexRevenue,
+    balance(@subscription_revenue, 2024-02-29, Customer='Initech') AS InitechRevenue,
+    balance(@bank, 2024-02-29) AS CashPosition

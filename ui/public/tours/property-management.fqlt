@@ -1,0 +1,144 @@
+---
+title: "Property Management"
+description: "Manage rental properties with tenant tracking, security deposits, rent collection, and maintenance expenses."
+author: "DblEntry Team"
+difficulty: intermediate
+tags: [property, rental, tenants, deposits, dimensions]
+version: 1
+---
+
+--@ step: Setting Up the Chart of Accounts
+--@ text: A property management company needs accounts for:
+--@   - **bank** — operating cash (asset)
+--@   - **security_deposits_held** — tenant deposits we're holding (liability)
+--@   - **accounts_receivable** — rent invoiced but not yet paid (asset)
+--@   - **rental_income** — earned rent (income)
+--@   - **maintenance_expense** — repairs and upkeep (expense)
+--@   - **management_fees** — property management fee income (income)
+--@   - **owner_equity** — initial capital (equity)
+--@ note: Security deposits are a **liability** — the money belongs to
+--@   the tenant and must be returned (minus damages) when they move out.
+
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @security_deposits_held LIABILITY;
+CREATE ACCOUNT @accounts_receivable ASSET;
+CREATE ACCOUNT @rental_income INCOME;
+CREATE ACCOUNT @maintenance_expense EXPENSE;
+CREATE ACCOUNT @management_fees INCOME;
+CREATE ACCOUNT @owner_equity EQUITY;
+
+--@ step: Initial Capital
+--@ text: The property management company starts with **$25,000**
+--@   in operating capital.
+
+CREATE JOURNAL 2024-01-01, 25000, 'Initial operating capital'
+  DEBIT @bank,
+  CREDIT @owner_equity;
+
+--@ step: Collecting Security Deposits
+--@ text: Three tenants move in and pay security deposits.
+--@   Each tenant is tracked with **Property** and **Tenant** dimensions
+--@   so we know exactly which deposit belongs to whom.
+--@ highlight: FOR, Property, Tenant
+--@ note: With dimensions, one account tracks all deposits while still
+--@   letting you query individual tenant balances — no need to create
+--@   a separate account per tenant.
+
+CREATE JOURNAL 2024-01-01, 2000, 'Security deposit - Apt 101'
+  FOR Property='Sunset Apartments', Tenant='Alice Chen'
+  DEBIT @bank,
+  CREDIT @security_deposits_held;
+
+CREATE JOURNAL 2024-01-01, 2000, 'Security deposit - Apt 102'
+  FOR Property='Sunset Apartments', Tenant='Bob Martinez'
+  DEBIT @bank,
+  CREDIT @security_deposits_held;
+
+CREATE JOURNAL 2024-01-01, 1500, 'Security deposit - Unit A'
+  FOR Property='Oak Street House', Tenant='Carol Davis'
+  DEBIT @bank,
+  CREDIT @security_deposits_held;
+
+--@ step: Collecting January Rent
+--@ text: All three tenants pay January rent. The **Property** and
+--@   **Tenant** dimensions let us run reports by property or by tenant.
+
+CREATE JOURNAL 2024-01-01, 1800, 'January rent - Apt 101'
+  FOR Property='Sunset Apartments', Tenant='Alice Chen'
+  DEBIT @bank,
+  CREDIT @rental_income;
+
+CREATE JOURNAL 2024-01-01, 1800, 'January rent - Apt 102'
+  FOR Property='Sunset Apartments', Tenant='Bob Martinez'
+  DEBIT @bank,
+  CREDIT @rental_income;
+
+CREATE JOURNAL 2024-01-01, 1400, 'January rent - Unit A'
+  FOR Property='Oak Street House', Tenant='Carol Davis'
+  DEBIT @bank,
+  CREDIT @rental_income;
+
+--@ step: Maintenance and Management Fees
+--@ text: A plumbing repair is needed at Sunset Apartments, costing **$450**.
+--@   We also charge a **10% management fee** on the total rent collected.
+--@ note: The management fee is internal revenue for the management company.
+--@   In a real setup, this might be a transfer to the management entity.
+
+CREATE JOURNAL 2024-01-15, 450, 'Plumbing repair - Apt 102'
+  FOR Property='Sunset Apartments', Tenant='Bob Martinez'
+  DEBIT @maintenance_expense,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-01-31, 500, 'January management fee (10% of rent)'
+  DEBIT @bank,
+  CREDIT @management_fees;
+
+--@ step: February Rent — One Tenant Pays Late
+--@ text: Alice and Carol pay on time. Bob hasn't paid yet — we record
+--@   his rent as **accounts receivable** (money owed to us).
+--@ highlight: accounts_receivable
+--@ note: Recording receivables lets the income statement reflect
+--@   earned revenue even before cash is collected. This is called
+--@   **accrual accounting**.
+
+CREATE JOURNAL 2024-02-01, 1800, 'February rent - Apt 101'
+  FOR Property='Sunset Apartments', Tenant='Alice Chen'
+  DEBIT @bank,
+  CREDIT @rental_income;
+
+CREATE JOURNAL 2024-02-01, 1800, 'February rent - Apt 102 (unpaid)'
+  FOR Property='Sunset Apartments', Tenant='Bob Martinez'
+  DEBIT @accounts_receivable,
+  CREDIT @rental_income;
+
+CREATE JOURNAL 2024-02-01, 1400, 'February rent - Unit A'
+  FOR Property='Oak Street House', Tenant='Carol Davis'
+  DEBIT @bank,
+  CREDIT @rental_income;
+
+--@ step: Bob Pays Late
+--@ text: Bob pays his overdue February rent on the 15th.
+--@   This clears his accounts receivable balance.
+
+CREATE JOURNAL 2024-02-15, 1800, 'Late payment received - Bob Feb rent'
+  FOR Property='Sunset Apartments', Tenant='Bob Martinez'
+  DEBIT @bank,
+  CREDIT @accounts_receivable;
+
+--@ step: Financial Reports
+--@ text: Let's analyze the portfolio:
+--@   - **Income by property** — which property earns more?
+--@   - **Deposit tracking** — how much do we owe each tenant?
+--@   - **Income statement** — total profit across all properties
+--@   - **Trial balance** — everything in balance
+--@   - **Maintenance costs** — per-property expense tracking
+--@ highlight: balance, income_statement, trial_balance, statement
+
+GET trial_balance(2024-02-28) AS TrialBalance,
+    income_statement(2024-01-01, 2024-02-28) AS PnL,
+    balance(@rental_income, 2024-02-28, Property='Sunset Apartments') AS SunsetRent,
+    balance(@rental_income, 2024-02-28, Property='Oak Street House') AS OakStreetRent,
+    balance(@security_deposits_held, 2024-02-28, Tenant='Alice Chen') AS AliceDeposit,
+    balance(@security_deposits_held, 2024-02-28, Tenant='Bob Martinez') AS BobDeposit,
+    balance(@security_deposits_held, 2024-02-28, Tenant='Carol Davis') AS CarolDeposit,
+    balance(@bank, 2024-02-28) AS CashPosition

@@ -1,0 +1,128 @@
+---
+title: "Running an E-Commerce Store"
+description: "Track revenue, cost of goods sold, sales tax, inventory, and refunds for an online store."
+author: "DblEntry Team"
+difficulty: beginner
+tags: [e-commerce, revenue, inventory, sales-tax, refunds]
+version: 1
+---
+
+--@ step: Setting Up the Chart of Accounts
+--@ text: An e-commerce business needs accounts across all five types:
+--@   - **bank** — your cash (asset)
+--@   - **inventory** — goods available for sale (asset)
+--@   - **accounts_receivable** — money owed by payment processors (asset)
+--@   - **sales_tax_payable** — tax collected, owed to government (liability)
+--@   - **revenue** — income from selling products (income)
+--@   - **cogs** — cost of goods sold (expense)
+--@   - **refund_expense** — cost of refunds (expense)
+--@   - **owner_equity** — owner's investment (equity)
+--@ highlight: ASSET, LIABILITY, INCOME, EXPENSE, EQUITY
+
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @inventory ASSET;
+CREATE ACCOUNT @accounts_receivable ASSET;
+CREATE ACCOUNT @sales_tax_payable LIABILITY;
+CREATE ACCOUNT @revenue INCOME;
+CREATE ACCOUNT @cogs EXPENSE;
+CREATE ACCOUNT @refund_expense EXPENSE;
+CREATE ACCOUNT @owner_equity EQUITY;
+
+--@ step: Owner Investment and Initial Inventory
+--@ text: The owner invests **$50,000** to start the business,
+--@   then uses **$20,000** to purchase initial inventory.
+--@
+--@   Notice how the cash moves: the bank account increases from
+--@   the investment, then decreases when we buy inventory.
+--@ highlight: DEBIT, CREDIT
+
+CREATE JOURNAL 2024-01-01, 50000, 'Owner initial investment'
+  DEBIT @bank,
+  CREDIT @owner_equity;
+
+CREATE JOURNAL 2024-01-05, 20000, 'Purchase inventory from supplier'
+  DEBIT @inventory,
+  CREDIT @bank;
+
+--@ step: Making Sales with Tax
+--@ text: We sell products to three customers. Each sale has two journal
+--@   entries — one for the revenue and tax, another for the cost of goods.
+--@
+--@   **Dimensions** tag each sale with a `Channel` so we can analyze
+--@   revenue by sales channel later.
+--@ note: The sales tax rate is 8%. On a $500 sale, that's $40 in tax,
+--@   so the customer pays $540 total. We record the $500 as revenue
+--@   and the $40 as a tax liability.
+
+CREATE JOURNAL 2024-01-15, 540, 'Sale to customer - Widget Pro'
+  FOR Channel='Website'
+  DEBIT @accounts_receivable 540,
+  CREDIT @revenue 500,
+  CREDIT @sales_tax_payable 40;
+
+CREATE JOURNAL 2024-01-15, 250, 'COGS - Widget Pro'
+  FOR Channel='Website'
+  DEBIT @cogs,
+  CREDIT @inventory;
+
+CREATE JOURNAL 2024-01-20, 1080, 'Sale to customer - Gadget Pack'
+  FOR Channel='Marketplace'
+  DEBIT @accounts_receivable 1080,
+  CREDIT @revenue 1000,
+  CREDIT @sales_tax_payable 80;
+
+CREATE JOURNAL 2024-01-20, 450, 'COGS - Gadget Pack'
+  FOR Channel='Marketplace'
+  DEBIT @cogs,
+  CREDIT @inventory;
+
+CREATE JOURNAL 2024-01-25, 270, 'Sale to customer - Starter Kit'
+  FOR Channel='Website'
+  DEBIT @accounts_receivable 270,
+  CREDIT @revenue 250,
+  CREDIT @sales_tax_payable 20;
+
+CREATE JOURNAL 2024-01-25, 100, 'COGS - Starter Kit'
+  FOR Channel='Website'
+  DEBIT @cogs,
+  CREDIT @inventory;
+
+--@ step: Collecting Payments
+--@ text: The payment processor settles and sends the cash to our bank.
+--@   This clears the accounts receivable balance.
+
+CREATE JOURNAL 2024-01-28, 1890, 'Payment processor settlement'
+  DEBIT @bank,
+  CREDIT @accounts_receivable;
+
+--@ step: Processing a Refund
+--@ text: A customer returns the Starter Kit for a full refund of **$270**
+--@   (including the $20 tax). We reverse the revenue and tax,
+--@   return the inventory, and send the money back.
+--@ note: In double-entry bookkeeping, corrections are made by creating
+--@   **reversing entries**, not by deleting the original transaction.
+--@   This preserves a complete audit trail.
+--@ highlight: refund
+
+CREATE JOURNAL 2024-02-01, 270, 'Refund - Starter Kit return'
+  DEBIT @revenue 250,
+  DEBIT @sales_tax_payable 20,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-02-01, 100, 'Inventory returned - Starter Kit'
+  DEBIT @inventory,
+  CREDIT @cogs;
+
+--@ step: Financial Reports
+--@ text: Let's see how the business is doing:
+--@   - **Income statement** — shows revenue minus expenses (profit/loss)
+--@   - **Trial balance** — all account balances (debits = credits)
+--@   - **Revenue by channel** — using dimension filtering
+--@   - **Remaining inventory** — what's left to sell
+--@ highlight: income_statement, trial_balance, balance
+
+GET income_statement(2024-01-01, 2024-02-28) AS PnL,
+    trial_balance(2024-02-28) AS TrialBalance,
+    balance(@revenue, 2024-02-28, Channel='Website') AS WebsiteRevenue,
+    balance(@revenue, 2024-02-28, Channel='Marketplace') AS MarketplaceRevenue,
+    balance(@inventory, 2024-02-28) AS RemainingInventory
