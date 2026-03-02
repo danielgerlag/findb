@@ -1,3 +1,6 @@
 /target
 **/target
 *.png
+docs/human/node_modules
+docs/human/.vitepress/dist
+docs/human/.vitepress/cache
