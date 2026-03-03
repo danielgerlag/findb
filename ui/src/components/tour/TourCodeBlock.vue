@@ -1,5 +1,5 @@
 <template>
-  <div class="tour-code-block">
+  <div class="tour-code-block" :class="{ 'highlight-flash': highlightActive }">
     <pre ref="codeEl"><code><template v-for="(line, i) in displayLines" :key="i"><span
       :class="lineClasses(i)"
     ><span class="line-num">{{ i + 1 }}</span><span v-html="renderLine(line)"></span>
@@ -29,6 +29,10 @@ const revealedCount = ref(props.reveal === 'instant' || !props.active ? allLines
 let timer: ReturnType<typeof setInterval> | null = null
 
 const displayLines = computed(() => allLines.value.slice(0, revealedCount.value))
+
+// Controls whether highlight flash animation is active
+const highlightActive = ref(false)
+let flashTimer: ReturnType<typeof setTimeout> | null = null
 
 // Focus: parse lines:N-M
 const focusRange = computed<[number, number] | null>(() => {
@@ -69,10 +73,14 @@ watch(() => props.active, (active) => {
   }
 }, { immediate: true })
 
+// Also trigger flash after line-by-line reveal finishes
 function startReveal() {
   if (props.reveal === 'instant') {
     revealedCount.value = allLines.value.length
     emit('revealed')
+    if (props.highlight && props.highlight.length > 0) {
+      flashTimer = setTimeout(() => { highlightActive.value = true }, 600)
+    }
     return
   }
   revealedCount.value = 0
@@ -83,23 +91,35 @@ function startReveal() {
       if (timer) clearInterval(timer)
       timer = null
       emit('revealed')
+      if (props.highlight && props.highlight.length > 0) {
+        flashTimer = setTimeout(() => { highlightActive.value = true }, 600)
+      }
     }
   }, delay)
 }
 
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
-
-// When code changes (new step), reset reveal
+// When code changes (new step), reset reveal and trigger highlight flash
 watch(() => props.code, () => {
   if (timer) clearInterval(timer)
   timer = null
+  highlightActive.value = false
+  if (flashTimer) clearTimeout(flashTimer)
   if (props.reveal === 'instant' || !props.active) {
     revealedCount.value = allLines.value.length
+    // Trigger flash after a short delay
+    if (props.highlight && props.highlight.length > 0) {
+      flashTimer = setTimeout(() => {
+        highlightActive.value = true
+      }, 600)
+    }
   } else {
     revealedCount.value = 0
   }
+})
+
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+  if (flashTimer) clearTimeout(flashTimer)
 })
 </script>
 
@@ -143,9 +163,21 @@ code { color: #e2e8f0; }
 :deep(.fql-punctuation) { color: #94a3b8; }
 :deep(.fql-bool) { color: #fb923c; font-weight: 500; }
 :deep(.fqlt-highlight) {
-  background: rgba(250, 204, 21, 0.3);
-  color: #fbbf24;
   padding: 0.1em 0.2em;
   border-radius: 3px;
+  background: transparent;
+  transition: background 0.3s, color 0.3s;
+}
+.highlight-flash :deep(.fqlt-highlight) {
+  animation: highlight-pulse 1.8s ease-in-out;
+}
+@keyframes highlight-pulse {
+  0%   { background: transparent; color: inherit; }
+  15%  { background: rgba(250, 204, 21, 0.45); color: #fbbf24; }
+  40%  { background: rgba(250, 204, 21, 0.15); color: #fbbf24; }
+  55%  { background: rgba(250, 204, 21, 0.45); color: #fbbf24; }
+  75%  { background: rgba(250, 204, 21, 0.15); color: #fbbf24; }
+  90%  { background: rgba(250, 204, 21, 0.35); color: #fbbf24; }
+  100% { background: transparent; color: inherit; }
 }
 </style>
