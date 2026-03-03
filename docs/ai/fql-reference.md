@@ -226,6 +226,46 @@ ACCRUE @loans FROM 2024-01-01 TO 2024-01-31
   CREDIT @interest_income;
 ```
 
+### DISTRIBUTE
+
+```sql
+DISTRIBUTE amount
+  FROM start_date TO end_date
+  PERIOD MONTHLY | QUARTERLY | YEARLY
+  [PRORATE]
+  [FOR dim1=val1, dim2=val2]
+  DESCRIPTION 'text'
+  DEBIT @account,
+  CREDIT @account;
+```
+
+Spreads a fixed amount evenly across time periods, generating one journal per period.
+
+- **Even split**: `amount / num_periods` per journal, remainder to last period
+- **PRORATE**: allocates by day count instead of even split (for partial first/last periods)
+- **Journal dates**: last day of each period (clamped to end date)
+- **Dimensions**: optional `FOR` clause attaches dimensions to all generated journals
+
+```sql
+-- Spread $12,000 annual subscription over 12 months
+DISTRIBUTE 12000
+  FROM 2024-01-01 TO 2024-12-31
+  PERIOD MONTHLY
+  FOR Customer='Acme'
+  DESCRIPTION 'Revenue recognition - Acme'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+-- Prorated insurance across partial months
+DISTRIBUTE 2400
+  FROM 2024-03-15 TO 2024-06-14
+  PERIOD MONTHLY
+  PRORATE
+  DESCRIPTION 'Insurance amortization'
+  DEBIT @insurance_expense,
+  CREDIT @prepaid_insurance;
+```
+
 ### Transactions
 
 ```sql

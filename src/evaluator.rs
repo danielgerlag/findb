@@ -25,6 +25,8 @@ pub enum EvaluationError {
     StorageError(#[from] StorageError),
     #[error("no rate found for the given date")]
     NoRateFound,
+    #[error("{0}")]
+    General(String),
 }
 
 pub type QueryVariables = BTreeMap<Arc<str>, DataValue>;

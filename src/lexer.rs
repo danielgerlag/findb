@@ -66,6 +66,13 @@ peg::parser! {
         rule kw_rollback()  = ("ROLLBACK" / "rollback")
         rule kw_entity()    = ("ENTITY" / "entity")
         rule kw_use()       = ("USE" / "use")
+        rule kw_distribute() = ("DISTRIBUTE" / "distribute")
+        rule kw_period()    = ("PERIOD" / "period")
+        rule kw_monthly()   = ("MONTHLY" / "monthly")
+        rule kw_quarterly() = ("QUARTERLY" / "quarterly")
+        rule kw_yearly()    = ("YEARLY" / "yearly")
+        rule kw_prorate()   = ("PRORATE" / "prorate")
+        rule kw_description() = ("DESCRIPTION" / "description")
 
         rule _()
             = [' ']
@@ -259,6 +266,25 @@ peg::parser! {
                     into_journal,
                 } 
             }
+
+        rule period() -> Period
+            = kw_monthly() { Period::Monthly }
+            / kw_quarterly() { Period::Quarterly }
+            / kw_yearly() { Period::Yearly }
+
+        rule distribute_command() -> DistributeCommand
+            = kw_distribute() __+ amount:expression() __+ kw_from() __+ start_date:expression() __+ kw_to() __+ end_date:expression() __+ kw_period() __+ period:period() __* prorate:(kw_prorate() { true })? __* dims:(kw_for() __+ dims:dimensions() {dims})? __* kw_description() __+ description:expression() __* ops:ledger_operations() {
+                DistributeCommand {
+                    amount,
+                    start_date,
+                    end_date,
+                    period,
+                    prorate: prorate.unwrap_or(false),
+                    dimensions: dims.unwrap_or_default(),
+                    operations: ops,
+                    description,
+                }
+            }
             
 
         rule set_command() -> SetCommand
@@ -280,6 +306,7 @@ peg::parser! {
             / kw_get() __+ e:projection_expression() ** (__* "," __*) { Statement::Get(GetExpression::get(e)) }
             / s:set_command() { Statement::Set(s) }
             / a:accrue_command() { Statement::Accrue(a) }
+            / d:distribute_command() { Statement::Distribute(d) }
             / kw_begin() { Statement::Begin }
             / kw_commit() { Statement::Commit }
             / kw_rollback() { Statement::Rollback }

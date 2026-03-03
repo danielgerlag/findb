@@ -63,25 +63,37 @@ CREATE JOURNAL 2024-01-12, 3600, 'Annual subscription - Initech'
 
 --@ step: Monthly Revenue Recognition — January
 --@ text: At the end of January, we've delivered one month of service.
---@   We move **1/12th** of each customer's annual payment from
---@   deferred revenue to earned revenue.
+--@   Instead of manually creating a journal for each month for each customer,
+--@   we use the **DISTRIBUTE** statement to spread each customer's annual payment
+--@   evenly across 12 months — automatically creating one journal per period.
 --@
---@   This is called **revenue recognition** — matching revenue to the
---@   period in which the service was delivered.
---@ highlight: deferred_revenue, subscription_revenue
+--@   `DISTRIBUTE` calculates `amount / num_periods` per journal, with the
+--@   last period absorbing any rounding remainder.
+--@ highlight: DISTRIBUTE, PERIOD, MONTHLY
+--@ note: DISTRIBUTE replaces 36 manual journal entries (3 customers × 12 months)
+--@   with just 3 statements. Each generates 12 journals automatically.
 
-CREATE JOURNAL 2024-01-31, 1000, 'Jan revenue recognition - Acme'
+DISTRIBUTE 12000
+  FROM 2024-01-01 TO 2024-12-31
+  PERIOD MONTHLY
   FOR Customer='Acme'
+  DESCRIPTION 'Revenue recognition - Acme'
   DEBIT @deferred_revenue,
   CREDIT @subscription_revenue;
 
-CREATE JOURNAL 2024-01-31, 500, 'Jan revenue recognition - Globex'
+DISTRIBUTE 6000
+  FROM 2024-01-01 TO 2024-12-31
+  PERIOD MONTHLY
   FOR Customer='Globex'
+  DESCRIPTION 'Revenue recognition - Globex'
   DEBIT @deferred_revenue,
   CREDIT @subscription_revenue;
 
-CREATE JOURNAL 2024-01-31, 300, 'Jan revenue recognition - Initech'
+DISTRIBUTE 3600
+  FROM 2024-01-01 TO 2024-12-31
+  PERIOD MONTHLY
   FOR Customer='Initech'
+  DESCRIPTION 'Revenue recognition - Initech'
   DEBIT @deferred_revenue,
   CREDIT @subscription_revenue;
 
@@ -93,43 +105,25 @@ CREATE JOURNAL 2024-01-31, 2500, 'January hosting infrastructure'
   DEBIT @hosting_expense,
   CREDIT @bank;
 
---@ step: February Revenue Recognition
---@ text: Another month of service delivered — recognize February's revenue.
---@   The pattern repeats every month until the subscriptions expire.
-
-CREATE JOURNAL 2024-02-29, 1000, 'Feb revenue recognition - Acme'
-  FOR Customer='Acme'
-  DEBIT @deferred_revenue,
-  CREDIT @subscription_revenue;
-
-CREATE JOURNAL 2024-02-29, 500, 'Feb revenue recognition - Globex'
-  FOR Customer='Globex'
-  DEBIT @deferred_revenue,
-  CREDIT @subscription_revenue;
-
-CREATE JOURNAL 2024-02-29, 300, 'Feb revenue recognition - Initech'
-  FOR Customer='Initech'
-  DEBIT @deferred_revenue,
-  CREDIT @subscription_revenue;
-
 CREATE JOURNAL 2024-02-29, 2500, 'February hosting infrastructure'
   DEBIT @hosting_expense,
   CREDIT @bank;
 
 --@ step: Financial Reports
---@ text: After two months, let's analyze the business:
---@   - **MRR** (Monthly Recurring Revenue) — total recognized this month
---@   - **Deferred revenue** — how much service we still owe
---@   - **Income statement** — revenue minus expenses = profit
+--@ text: Since DISTRIBUTE created all 12 months of journals upfront,
+--@   we can report on the full year immediately:
+--@   - **Total recognized revenue** — all 12 months across all customers
+--@   - **Deferred revenue** — should be zero since all months are recognized
+--@   - **Income statement** — full year revenue minus expenses = profit
 --@   - **Per-customer revenue** — using dimension queries
 --@   - **Cash position** — how much cash we have
 --@ highlight: income_statement, trial_balance, balance
 
-GET trial_balance(2024-02-29) AS TrialBalance,
-    income_statement(2024-01-01, 2024-02-29) AS PnL,
-    balance(@deferred_revenue, 2024-02-29) AS RemainingDeferred,
-    balance(@subscription_revenue, 2024-02-29) AS TotalRecognized,
-    balance(@subscription_revenue, 2024-02-29, Customer='Acme') AS AcmeRevenue,
-    balance(@subscription_revenue, 2024-02-29, Customer='Globex') AS GlobexRevenue,
-    balance(@subscription_revenue, 2024-02-29, Customer='Initech') AS InitechRevenue,
-    balance(@bank, 2024-02-29) AS CashPosition
+GET trial_balance(2024-12-31) AS TrialBalance,
+    income_statement(2024-01-01, 2024-12-31) AS PnL,
+    balance(@deferred_revenue, 2024-12-31) AS RemainingDeferred,
+    balance(@subscription_revenue, 2024-12-31) AS TotalRecognized,
+    balance(@subscription_revenue, 2024-12-31, Customer='Acme') AS AcmeRevenue,
+    balance(@subscription_revenue, 2024-12-31, Customer='Globex') AS GlobexRevenue,
+    balance(@subscription_revenue, 2024-12-31, Customer='Initech') AS InitechRevenue,
+    balance(@bank, 2024-12-31) AS CashPosition

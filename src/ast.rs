@@ -12,6 +12,7 @@ pub enum Statement{
     Get(GetExpression),
     Set(SetCommand),
     Accrue(AccrueCommand),
+    Distribute(DistributeCommand),
     UseEntity(Arc<str>),
     Begin,
     Commit,
@@ -40,6 +41,25 @@ pub struct AccrueCommand {
     pub end_date: Expression,
     pub by_dimension: Arc<str>,
     pub into_journal: IntoJournalExpression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DistributeCommand {
+    pub amount: Expression,
+    pub start_date: Expression,
+    pub end_date: Expression,
+    pub period: Period,
+    pub prorate: bool,
+    pub dimensions: BTreeMap<Arc<str>, Expression>,
+    pub operations: Vec<LedgerOperation>,
+    pub description: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Period {
+    Monthly,
+    Quarterly,
+    Yearly,
 }
 
 #[derive(Debug, Clone, PartialEq)]

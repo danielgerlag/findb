@@ -1906,3 +1906,257 @@ fn test_multi_entity_trial_balance() {
         v => panic!("Expected Int(0), got {:?}", v),
     }
 }
+
+// ===================== DISTRIBUTE TESTS =====================
+
+#[test]
+fn test_distribute_even_monthly() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @deferred_revenue LIABILITY;
+        CREATE ACCOUNT @subscription_revenue INCOME;
+        DISTRIBUTE 12000
+            FROM 2024-01-01 TO 2024-12-31
+            PERIOD MONTHLY
+            DESCRIPTION 'Revenue recognition'
+            DEBIT @deferred_revenue,
+            CREDIT @subscription_revenue;
+    ");
+
+    // Should create 12 journals of 1000 each
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@subscription_revenue, 2024-12-31) AS rev,
+            balance(@deferred_revenue, 2024-12-31) AS def
+    ");
+    match &results[0].variables["rev"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(12000)),
+        v => panic!("Expected 12000, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_distribute_remainder_handling() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @expense EXPENSE;
+        CREATE ACCOUNT @prepaid ASSET;
+        DISTRIBUTE 10000
+            FROM 2024-01-01 TO 2024-03-31
+            PERIOD MONTHLY
+            DESCRIPTION 'Amortization'
+            DEBIT @expense,
+            CREDIT @prepaid;
+    ");
+
+    // 10000 / 3 = 3333.33, 3333.33, 3333.34
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@expense, 2024-01-31) AS jan,
+            balance(@expense, 2024-02-29) AS feb,
+            balance(@expense, 2024-03-31) AS mar
+    ");
+    match &results[0].variables["jan"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(3333.33)),
+        v => panic!("Expected 3333.33, got {:?}", v),
+    }
+    match &results[0].variables["mar"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(10000)),
+        v => panic!("Expected 10000 total by March, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_distribute_quarterly() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @depreciation EXPENSE;
+        CREATE ACCOUNT @accum_dep ASSET;
+        DISTRIBUTE 4000
+            FROM 2024-01-01 TO 2024-12-31
+            PERIOD QUARTERLY
+            DESCRIPTION 'Quarterly depreciation'
+            DEBIT @depreciation,
+            CREDIT @accum_dep;
+    ");
+
+    // 4 quarters of 1000 each
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@depreciation, 2024-03-31) AS q1,
+            balance(@depreciation, 2024-06-30) AS q2,
+            balance(@depreciation, 2024-12-31) AS total
+    ");
+    match &results[0].variables["q1"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(1000)),
+        v => panic!("Expected 1000, got {:?}", v),
+    }
+    match &results[0].variables["total"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(4000)),
+        v => panic!("Expected 4000, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_distribute_yearly() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @depreciation EXPENSE;
+        CREATE ACCOUNT @accum_dep ASSET;
+        DISTRIBUTE 60000
+            FROM 2024-01-01 TO 2028-12-31
+            PERIOD YEARLY
+            DESCRIPTION 'Yearly depreciation'
+            DEBIT @depreciation,
+            CREDIT @accum_dep;
+    ");
+
+    // 5 years of 12000 each
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@depreciation, 2024-12-31) AS y1,
+            balance(@depreciation, 2028-12-31) AS total
+    ");
+    match &results[0].variables["y1"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(12000)),
+        v => panic!("Expected 12000, got {:?}", v),
+    }
+    match &results[0].variables["total"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(60000)),
+        v => panic!("Expected 60000, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_distribute_prorate() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @insurance EXPENSE;
+        CREATE ACCOUNT @prepaid ASSET;
+        DISTRIBUTE 2400
+            FROM 2024-03-15 TO 2024-06-14
+            PERIOD MONTHLY
+            PRORATE
+            DESCRIPTION 'Insurance amortization'
+            DEBIT @insurance,
+            CREDIT @prepaid;
+    ");
+
+    // Prorated: Mar 15-31 (17 days), Apr (30 days), May (31 days), Jun 1-14 (14 days)
+    // Total = 92 days
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@insurance, 2024-06-30) AS total
+    ");
+    match &results[0].variables["total"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(2400)),
+        v => panic!("Expected 2400 total, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_distribute_with_dimensions() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @deferred_revenue LIABILITY;
+        CREATE ACCOUNT @subscription_revenue INCOME;
+        DISTRIBUTE 6000
+            FROM 2024-01-01 TO 2024-06-30
+            PERIOD MONTHLY
+            FOR Customer='Acme'
+            DESCRIPTION 'Acme revenue recognition'
+            DEBIT @deferred_revenue,
+            CREDIT @subscription_revenue;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@subscription_revenue, 2024-06-30) AS rev
+    ");
+    match &results[0].variables["rev"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(6000)),
+        v => panic!("Expected 6000, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_distribute_negative_amount() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @deferred LIABILITY;
+        DISTRIBUTE 12000
+            FROM 2024-01-01 TO 2024-12-31
+            PERIOD MONTHLY
+            DESCRIPTION 'Revenue recognition'
+            DEBIT @deferred,
+            CREDIT @revenue;
+        DISTRIBUTE 6000
+            FROM 2024-07-01 TO 2024-12-31
+            PERIOD MONTHLY
+            DESCRIPTION 'Cancellation reversal'
+            DEBIT @revenue,
+            CREDIT @deferred;
+    ");
+
+    // 12×1000 = 12000 revenue credited, then 6×1000 revenue debited = net 6000
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@revenue, 2024-12-31) AS rev
+    ");
+    match &results[0].variables["rev"] {
+        DataValue::Money(d) => assert_eq!(*d, rust_decimal_macros::dec!(6000)),
+        v => panic!("Expected 6000 net revenue, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_distribute_zero_amount_error() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @a ASSET;
+        CREATE ACCOUNT @b LIABILITY;
+    ");
+    let stmts = dblentry::lexer::parse("
+        DISTRIBUTE 0
+            FROM 2024-01-01 TO 2024-12-31
+            PERIOD MONTHLY
+            DESCRIPTION 'Should fail'
+            DEBIT @a,
+            CREDIT @b;
+    ").unwrap();
+    let result = exec.execute(&mut ctx, &stmts[0]);
+    assert!(result.is_err(), "Zero amount should produce an error");
+}
+
+#[test]
+fn test_distribute_invalid_date_range_error() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @a ASSET;
+        CREATE ACCOUNT @b LIABILITY;
+    ");
+    let stmts = dblentry::lexer::parse("
+        DISTRIBUTE 1000
+            FROM 2024-12-31 TO 2024-01-01
+            PERIOD MONTHLY
+            DESCRIPTION 'Should fail'
+            DEBIT @a,
+            CREDIT @b;
+    ").unwrap();
+    let result = exec.execute(&mut ctx, &stmts[0]);
+    assert!(result.is_err(), "End before start should produce an error");
+}
+
+#[test]
+fn test_distribute_trial_balance() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @deferred_revenue LIABILITY;
+        CREATE ACCOUNT @subscription_revenue INCOME;
+        DISTRIBUTE 12000
+            FROM 2024-01-01 TO 2024-12-31
+            PERIOD MONTHLY
+            DESCRIPTION 'Revenue recognition'
+            DEBIT @deferred_revenue,
+            CREDIT @subscription_revenue;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET trial_balance(2024-12-31) AS tb
+    ");
+    assert_trial_balance_balanced(&results[0].variables["tb"], "distribute");
+}

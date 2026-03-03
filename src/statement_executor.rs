@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation}, storage::{StorageBackend, TransactionId, DEFAULT_ENTITY}, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation, DistributeCommand, Period}, storage::{StorageBackend, TransactionId, DEFAULT_ENTITY}, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
@@ -92,6 +92,7 @@ impl StatementExecutor {
             },
             Statement::Get(get) => self.get(context, get)?,
             Statement::Accrue(accrue) => self.accrue(context, accrue)?,
+            Statement::Distribute(distribute) => self.distribute(context, distribute)?,
             Statement::Set(s) => match s {
                 SetCommand::Rate(r) => self.set_rate(context, r)?,
             },
@@ -373,6 +374,145 @@ impl StatementExecutor {
 
         Ok(result)
     }
+    fn distribute(&self, context: &ExecutionContext, cmd: &DistributeCommand) -> Result<ExecutionResult, EvaluationError> {
+        let eval_ctx: ExpressionEvaluationContext = context.into();
+        let mut result = ExecutionResult::new();
+
+        let start_date = match self.expression_evaluator.evaluate_expression(&eval_ctx, &cmd.start_date)? {
+            DataValue::Date(d) => d,
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        let end_date = match self.expression_evaluator.evaluate_expression(&eval_ctx, &cmd.end_date)? {
+            DataValue::Date(d) => d,
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        if end_date < start_date {
+            return Err(EvaluationError::General("DISTRIBUTE: end date must be on or after start date".into()));
+        }
+
+        let total_amount = match self.expression_evaluator.evaluate_expression(&eval_ctx, &cmd.amount)? {
+            DataValue::Money(d) => d,
+            DataValue::Int(i) => Decimal::from(i),
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        if total_amount == Decimal::ZERO {
+            return Err(EvaluationError::General("DISTRIBUTE: amount must not be zero".into()));
+        }
+
+        let description = match self.expression_evaluator.evaluate_expression(&eval_ctx, &cmd.description)? {
+            DataValue::String(s) => s,
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        let dimensions = {
+            let mut dims = BTreeMap::new();
+            for (k, v) in cmd.dimensions.iter() {
+                dims.insert(k.clone(), Arc::new(self.expression_evaluator.evaluate_expression(&eval_ctx, v)?));
+            }
+            dims
+        };
+
+        let periods = generate_periods(start_date, end_date, &cmd.period);
+        let num_periods = periods.len();
+
+        let amounts = if cmd.prorate {
+            // Allocate by day count
+            let total_days: i64 = periods.iter().map(|(s, e)| (*e - *s).whole_days() + 1).sum();
+            let mut allocated = Decimal::ZERO;
+            let mut period_amounts = Vec::with_capacity(num_periods);
+            for (i, (ps, pe)) in periods.iter().enumerate() {
+                if i == num_periods - 1 {
+                    period_amounts.push(total_amount - allocated);
+                } else {
+                    let days = (*pe - *ps).whole_days() + 1;
+                    let amt = (total_amount * Decimal::from(days) / Decimal::from(total_days)).round_dp(2);
+                    allocated += amt;
+                    period_amounts.push(amt);
+                }
+            }
+            period_amounts
+        } else {
+            // Even split, remainder to last period
+            let per_period = (total_amount / Decimal::from(num_periods as i64)).round_dp(2);
+            let mut period_amounts = vec![per_period; num_periods];
+            let allocated = per_period * Decimal::from((num_periods - 1) as i64);
+            period_amounts[num_periods - 1] = total_amount - allocated;
+            period_amounts
+        };
+
+        for (i, (_ps, pe)) in periods.iter().enumerate() {
+            let period_amount = amounts[i];
+            let mut period_eval_ctx = eval_ctx.clone();
+            period_eval_ctx.set_effective_date(*pe);
+
+            let journal = CreateJournalCommand {
+                date: *pe,
+                description: description.clone(),
+                amount: period_amount,
+                ledger_entries: self.build_ledger_entries(&period_eval_ctx, &cmd.operations, period_amount)?,
+                dimensions: dimensions.clone(),
+            };
+            self.storage.create_journal(&context.entity_id, &journal)?;
+            result.journals_created += 1;
+        }
+
+        Ok(result)
+    }
+}
+
+/// Generate a list of (period_start, period_end) date tuples for the given range and frequency.
+fn generate_periods(start: Date, end: Date, period: &Period) -> Vec<(Date, Date)> {
+    let mut periods = Vec::new();
+    let mut cursor = start;
+
+    while cursor <= end {
+        let period_end = match period {
+            Period::Monthly => {
+                let m = cursor.month().next();
+                let (y, next_month) = if m == time::Month::January {
+                    (cursor.year() + 1, m)
+                } else {
+                    (cursor.year(), m)
+                };
+                // First day of next month minus 1 day = last day of current period month
+                let first_of_next = Date::from_calendar_date(y, next_month, 1).unwrap();
+                first_of_next.previous_day().unwrap()
+            }
+            Period::Quarterly => {
+                let quarter_end_month = match cursor.month() {
+                    time::Month::January | time::Month::February | time::Month::March => time::Month::March,
+                    time::Month::April | time::Month::May | time::Month::June => time::Month::June,
+                    time::Month::July | time::Month::August | time::Month::September => time::Month::September,
+                    time::Month::October | time::Month::November | time::Month::December => time::Month::December,
+                };
+                let (y, next_month) = match quarter_end_month {
+                    time::Month::December => (cursor.year() + 1, time::Month::January),
+                    _ => (cursor.year(), quarter_end_month.next()),
+                };
+                let first_of_next = Date::from_calendar_date(y, next_month, 1).unwrap();
+                first_of_next.previous_day().unwrap()
+            }
+            Period::Yearly => {
+                let first_of_next_year = Date::from_calendar_date(cursor.year() + 1, time::Month::January, 1).unwrap();
+                first_of_next_year.previous_day().unwrap()
+            }
+        };
+
+        // Clamp period_end to the overall end date
+        let clamped_end = if period_end > end { end } else { period_end };
+        periods.push((cursor, clamped_end));
+
+        // Move cursor to next period
+        cursor = match period_end.next_day() {
+            Some(d) => d,
+            None => break,
+        };
+    }
+
+    periods
 }
 
 fn calc_daily_accural_amount(rate: Decimal, pv: Decimal, compounding: &Option<Compounding>) -> Decimal {

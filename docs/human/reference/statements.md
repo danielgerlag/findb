@@ -224,6 +224,73 @@ ACCRUE @loans FROM 2024-01-01 TO 2024-01-31
 
 ---
 
+## DISTRIBUTE
+
+Spreads a fixed amount evenly across time periods, generating one journal entry per period. Useful for revenue recognition, straight-line depreciation, and prepaid expense amortization.
+
+**Syntax:**
+
+```sql
+DISTRIBUTE amount
+  FROM start_date TO end_date
+  PERIOD MONTHLY | QUARTERLY | YEARLY
+  [PRORATE]
+  [FOR dim1=val1, dim2=val2]
+  DESCRIPTION 'text'
+  DEBIT @account,
+  CREDIT @account;
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `amount` | Total amount to distribute across all periods |
+| `FROM ... TO` | Date range for the distribution |
+| `PERIOD` | Frequency: `MONTHLY`, `QUARTERLY`, or `YEARLY` |
+| `PRORATE` | Optional. Allocate by day count instead of even split (for partial periods) |
+| `FOR` | Optional. Attach dimensions to all generated journals |
+| `DESCRIPTION` | Description text for all generated journals |
+
+**Behavior:**
+
+- **Even split** (default): Each period gets `amount / num_periods`, last period absorbs rounding remainder
+- **PRORATE**: Each period gets `amount × days_in_period / total_days`, remainder to last period
+- **Journal dates**: Last day of each period, clamped to the end date
+- **Amount must not be zero**; end date must be on or after start date
+
+**Examples:**
+
+```sql
+-- Revenue recognition: spread $12,000 over 12 months
+DISTRIBUTE 12000
+  FROM 2024-01-01 TO 2024-12-31
+  PERIOD MONTHLY
+  FOR Customer='Acme'
+  DESCRIPTION 'Revenue recognition - Acme'
+  DEBIT @deferred_revenue,
+  CREDIT @subscription_revenue;
+
+-- Straight-line depreciation over 5 years
+DISTRIBUTE 60000
+  FROM 2024-01-01 TO 2028-12-31
+  PERIOD YEARLY
+  DESCRIPTION 'Annual depreciation - truck'
+  DEBIT @depreciation_expense,
+  CREDIT @accumulated_depreciation;
+
+-- Prorated insurance across partial months
+DISTRIBUTE 2400
+  FROM 2024-03-15 TO 2024-06-14
+  PERIOD MONTHLY
+  PRORATE
+  DESCRIPTION 'Insurance amortization'
+  DEBIT @insurance_expense,
+  CREDIT @prepaid_insurance;
+```
+
+---
+
 ## BEGIN / COMMIT / ROLLBACK
 
 Explicit ACID transaction control.
