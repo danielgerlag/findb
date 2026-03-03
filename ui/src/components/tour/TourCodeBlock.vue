@@ -71,6 +71,10 @@ watch(() => props.active, (active) => {
   if (active && props.reveal !== 'instant') {
     startReveal()
   }
+  // For instant reveal, trigger highlight flash on mount
+  if (active && props.reveal === 'instant' && props.highlight && props.highlight.length > 0) {
+    flashTimer = setTimeout(() => { highlightActive.value = true }, 600)
+  }
 }, { immediate: true })
 
 // Also trigger flash after line-by-line reveal finishes
@@ -163,21 +167,21 @@ code { color: #e2e8f0; }
 :deep(.fql-punctuation) { color: #94a3b8; }
 :deep(.fql-bool) { color: #fb923c; font-weight: 500; }
 :deep(.fqlt-highlight) {
-  padding: 0.1em 0.2em;
+  display: inline;
+  padding: 0.15em 0.3em;
   border-radius: 3px;
   background: transparent;
-  transition: background 0.3s, color 0.3s;
 }
 .highlight-flash :deep(.fqlt-highlight) {
-  animation: highlight-pulse 1.8s ease-in-out;
+  animation: highlight-pulse 2.2s ease-in-out;
 }
 @keyframes highlight-pulse {
-  0%   { background: transparent; color: inherit; }
-  15%  { background: rgba(250, 204, 21, 0.45); color: #fbbf24; }
-  40%  { background: rgba(250, 204, 21, 0.15); color: #fbbf24; }
-  55%  { background: rgba(250, 204, 21, 0.45); color: #fbbf24; }
-  75%  { background: rgba(250, 204, 21, 0.15); color: #fbbf24; }
-  90%  { background: rgba(250, 204, 21, 0.35); color: #fbbf24; }
-  100% { background: transparent; color: inherit; }
+  0%   { background: transparent; outline: 2px solid transparent; }
+  10%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); }
+  30%  { background: transparent; outline: 2px solid transparent; }
+  45%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); }
+  65%  { background: transparent; outline: 2px solid transparent; }
+  78%  { background: rgba(253, 224, 71, 0.3); outline: 2px solid rgba(253, 224, 71, 0.5); }
+  100% { background: transparent; outline: 2px solid transparent; }
 }
 </style>
