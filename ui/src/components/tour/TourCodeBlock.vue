@@ -171,17 +171,18 @@ code { color: #e2e8f0; }
   padding: 0.15em 0.3em;
   border-radius: 3px;
   background: transparent;
+  color: inherit;
 }
 .highlight-flash :deep(.fqlt-highlight) {
   animation: highlight-pulse 2.2s ease-in-out;
 }
 @keyframes highlight-pulse {
-  0%   { background: transparent; outline: 2px solid transparent; }
-  10%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); }
-  30%  { background: transparent; outline: 2px solid transparent; }
-  45%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); }
-  65%  { background: transparent; outline: 2px solid transparent; }
-  78%  { background: rgba(253, 224, 71, 0.3); outline: 2px solid rgba(253, 224, 71, 0.5); }
-  100% { background: transparent; outline: 2px solid transparent; }
+  0%   { background: transparent; outline: 2px solid transparent; color: inherit; }
+  10%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); color: #fff !important; }
+  30%  { background: transparent; outline: 2px solid transparent; color: inherit; }
+  45%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); color: #fff !important; }
+  65%  { background: transparent; outline: 2px solid transparent; color: inherit; }
+  78%  { background: rgba(253, 224, 71, 0.3); outline: 2px solid rgba(253, 224, 71, 0.5); color: #fff !important; }
+  100% { background: transparent; outline: 2px solid transparent; color: inherit; }
 }
 </style>
