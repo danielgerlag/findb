@@ -540,6 +540,7 @@ version = "0.1.0"
 dependencies = [
  "prettytable-rs",
  "rust_decimal",
+ "serde",
  "thiserror",
  "time",
 ]

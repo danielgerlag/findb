@@ -7,7 +7,8 @@ use time::Date;
 pub mod write;
 pub mod read;
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AccountType {
     Asset,
     Liability,

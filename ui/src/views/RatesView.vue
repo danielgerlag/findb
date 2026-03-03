@@ -64,7 +64,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { executeFql, escapeFql } from '../api/client'
+import { executeFql, executeFqlV1, getResultValue, escapeFql } from '../api/client'
 import { useEntityStore } from '../stores/entity'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
@@ -116,11 +116,16 @@ async function doLookup() {
   if (!lookupId.value) return
   const date = formatDate(lookupDate.value)
   try {
-    const resp = await executeFql(`GET fx_rate('${escapeFql(lookupId.value)}', ${date}) AS rate`, entityStore.activeEntity)
-    if (resp.success && resp.results.length > 0) {
-      const resultText = resp.results[0] ?? ''
-      const match = resultText.match(/rate:\s*(.+)/)
-      lookupResult.value = match && match[1] ? match[1].trim() : resultText
+    const resp = await executeFqlV1(`GET fx_rate('${escapeFql(lookupId.value)}', ${date}) AS rate`, entityStore.activeEntity)
+    if (resp.success) {
+      const rateVal = getResultValue(resp, 'rate')
+      if (rateVal && rateVal.type === 'money') {
+        lookupResult.value = rateVal.value
+      } else if (rateVal && rateVal.type === 'string') {
+        lookupResult.value = rateVal.value
+      } else {
+        lookupResult.value = 'Not found'
+      }
     } else {
       lookupResult.value = resp.error || 'Not found'
     }

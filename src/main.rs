@@ -6,6 +6,7 @@ use dblentry::grpc::{pb::dbl_entry_server::DblEntryServer, DblEntryService};
 use dblentry::auth::auth_middleware;
 use dblentry::config::{CliArgs, Config};
 use dblentry::functions::{Statement, TrialBalance};
+use dblentry::api::v1::handlers::fql_handler_v1;
 use dblentry::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max}, lexer};
 use dblentry_sqlite::SqliteStorage;
 use dblentry_postgres::PostgresStorage;
@@ -19,21 +20,7 @@ struct CreateEntityRestRequest {
     name: String,
 }
 
-#[derive(Serialize)]
-struct FqlResponse {
-    success: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    results: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-    metadata: FqlMetadata,
-}
-
-#[derive(Serialize)]
-struct FqlMetadata {
-    statements_executed: usize,
-    journals_created: usize,
-}
+use dblentry::api::{TextFqlResponse, TextFqlMetadata};
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -98,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Protected routes (auth middleware applied)
     let protected = Router::new()
         .route("/fql", post(fql_handler))
+        .route("/api/v1/fql", post(fql_handler_v1))
         .route("/api/accounts", post(rest_create_account).get(rest_list_accounts))
         .route("/api/accounts/:id/balance", get(rest_get_balance))
         .route("/api/accounts/:id/statement", get(rest_get_statement))
@@ -195,11 +183,11 @@ async fn fql_handler(
         Err(e) => {
             tracing::warn!("FQL parse error: {}", e);
             counter!("fql_errors_total", 1, "type" => "parse");
-            let resp = FqlResponse {
+            let resp = TextFqlResponse {
                 success: false,
                 results: vec![],
                 error: Some(format!("Parse error: {}", e)),
-                metadata: FqlMetadata { statements_executed: 0, journals_created: 0 },
+                metadata: TextFqlMetadata { statements_executed: 0, journals_created: 0 },
             };
             return (StatusCode::BAD_REQUEST, Json(resp));
         }
@@ -232,11 +220,11 @@ async fn fql_handler(
                 "FQL query executed"
             );
 
-            let resp = FqlResponse {
+            let resp = TextFqlResponse {
                 success: true,
                 results,
                 error: None,
-                metadata: FqlMetadata { statements_executed: script_results.len(), journals_created: total_journals },
+                metadata: TextFqlMetadata { statements_executed: script_results.len(), journals_created: total_journals },
             };
             (StatusCode::OK, Json(resp))
         }
@@ -246,11 +234,11 @@ async fn fql_handler(
             let duration = start.elapsed();
             histogram!("fql_request_duration_seconds", duration.as_secs_f64());
 
-            let resp = FqlResponse {
+            let resp = TextFqlResponse {
                 success: false,
                 results: vec![],
                 error: Some(format!("{}", e)),
-                metadata: FqlMetadata { statements_executed: 0, journals_created: 0 },
+                metadata: TextFqlMetadata { statements_executed: 0, journals_created: 0 },
             };
             (StatusCode::INTERNAL_SERVER_ERROR, Json(resp))
         }

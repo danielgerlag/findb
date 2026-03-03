@@ -81,7 +81,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import { executeFql, parseTrialBalance, parseStatement, escapeFql, type TrialBalanceItem, type StatementTxn } from '../api/client'
+import { executeFql, executeFqlV1, getResultValue, escapeFql, type TrialBalanceItemDto, type StatementTxnDto } from '../api/client'
 import { useEntityStore } from '../stores/entity'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -94,10 +94,10 @@ import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
 const entityStore = useEntityStore()
-const accounts = ref<TrialBalanceItem[]>([])
+const accounts = ref<TrialBalanceItemDto[]>([])
 const loading = ref(false)
-const selectedAccount = ref<TrialBalanceItem | null>(null)
-const statement = ref<StatementTxn[]>([])
+const selectedAccount = ref<TrialBalanceItemDto | null>(null)
+const statement = ref<StatementTxnDto[]>([])
 const stmtLoading = ref(false)
 const showCreate = ref(false)
 const newId = ref('')
@@ -124,9 +124,12 @@ async function loadAccounts() {
   statement.value = []
   try {
     const today = formatDate(new Date())
-    const resp = await executeFql(`GET trial_balance(${today}) AS tb`, entityStore.activeEntity)
-    if (resp.success && resp.results.length > 0 && resp.results[0]) {
-      accounts.value = parseTrialBalance(resp.results[0])
+    const resp = await executeFqlV1(`GET trial_balance(${today}) AS tb`, entityStore.activeEntity)
+    if (resp.success) {
+      const tbVal = getResultValue(resp, 'tb')
+      if (tbVal && tbVal.type === 'trial_balance') {
+        accounts.value = tbVal.value
+      }
     }
   } catch (e: any) {
     toast.add({ severity: 'error', summary: 'Failed to load accounts', detail: e.message, life: 5000 })
@@ -150,13 +153,16 @@ async function loadStatement() {
   }
   stmtLoading.value = true
   try {
-    const resp = await executeFql(`GET statement(@${id}, ${from}, ${to}${dim}) AS stmt`, entityStore.activeEntity)
-    if (resp.success && resp.results.length > 0 && resp.results[0]) {
-      statement.value = parseStatement(resp.results[0])
-      if (statement.value.length === 0) {
-        toast.add({ severity: 'info', summary: 'No transactions', detail: `No entries found for @${id} in this period`, life: 3000 })
+    const resp = await executeFqlV1(`GET statement(@${id}, ${from}, ${to}${dim}) AS stmt`, entityStore.activeEntity)
+    if (resp.success) {
+      const stmtVal = getResultValue(resp, 'stmt')
+      if (stmtVal && stmtVal.type === 'statement') {
+        statement.value = stmtVal.value
+        if (statement.value.length === 0) {
+          toast.add({ severity: 'info', summary: 'No transactions', detail: `No entries found for @${id} in this period`, life: 3000 })
+        }
       }
-    } else if (!resp.success) {
+    } else {
       toast.add({ severity: 'error', summary: 'Statement error', detail: resp.error || 'Unknown error', life: 5000 })
     }
   } catch (e: any) {

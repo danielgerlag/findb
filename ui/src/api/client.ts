@@ -28,6 +28,56 @@ export interface StatementTxn {
   balance: string
 }
 
+// --- V1 Structured API types ---
+
+export type AccountTypeDto = 'asset' | 'liability' | 'equity' | 'income' | 'expense'
+
+export interface TrialBalanceItemDto {
+  account_id: string
+  account_type: AccountTypeDto
+  balance: string
+  debit?: string
+  credit?: string
+}
+
+export interface StatementTxnDto {
+  journal_id: string
+  date: string
+  description: string
+  amount: string
+  balance: string
+}
+
+export interface ResultEntryDto {
+  name: string
+  value: DataValueDto
+}
+
+export type DataValueDto =
+  | { type: 'null' }
+  | { type: 'bool'; value: boolean }
+  | { type: 'int'; value: number }
+  | { type: 'money'; value: string }
+  | { type: 'percentage'; value: string }
+  | { type: 'string'; value: string }
+  | { type: 'date'; value: string }
+  | { type: 'list'; value: DataValueDto[] }
+  | { type: 'map'; value: { key: string; value: DataValueDto }[] }
+  | { type: 'account_id'; value: string }
+  | { type: 'dimension'; value: { key: string; value: DataValueDto } }
+  | { type: 'statement'; value: StatementTxnDto[] }
+  | { type: 'trial_balance'; value: TrialBalanceItemDto[] }
+
+export interface FqlResponseV1 {
+  success: boolean
+  results: ResultEntryDto[]
+  error?: string
+  metadata: {
+    statements_executed: number
+    journals_created: number
+  }
+}
+
 async function safeJson<T>(res: Response): Promise<T> {
   const text = await res.text()
   if (!text) {
@@ -59,6 +109,24 @@ export async function executeFql(query: string, entityId?: string): Promise<FqlR
     body,
   })
   return safeJson<FqlResponse>(res)
+}
+
+export async function executeFqlV1(query: string, entityId?: string): Promise<FqlResponseV1> {
+  let body = query
+  if (entityId && entityId !== 'default') {
+    body = `USE ENTITY '${escapeFql(entityId)}';\n${query}`
+  }
+  const res = await fetch(`${BASE}/api/v1/fql`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain', 'Accept': 'application/json' },
+    body,
+  })
+  return safeJson<FqlResponseV1>(res)
+}
+
+/** Extract a named result from a V1 response. */
+export function getResultValue(resp: FqlResponseV1, name: string): DataValueDto | undefined {
+  return resp.results.find((r) => r.name === name)?.value
 }
 
 export async function getHealth(): Promise<{ status: string; version: string }> {
