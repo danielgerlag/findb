@@ -102,6 +102,34 @@ impl PostgresStorage {
 
             INSERT INTO sequence_counter (id, value) VALUES (1, 0)
                 ON CONFLICT (id) DO NOTHING;
+
+            -- Enable ltree extension (for hierarchical dimensions)
+            CREATE EXTENSION IF NOT EXISTS ltree;
+
+            -- Safe add column - ignore if exists
+            DO $$ BEGIN
+                ALTER TABLE accounts ADD COLUMN unit_rate_id TEXT;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+
+            -- Lots table
+            CREATE TABLE IF NOT EXISTS lots (
+                id BIGSERIAL PRIMARY KEY,
+                account_id TEXT NOT NULL REFERENCES accounts(id),
+                date TEXT NOT NULL,
+                units_remaining TEXT NOT NULL,
+                cost_per_unit TEXT NOT NULL,
+                journal_id TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS lot_dimensions (
+                lot_id BIGINT NOT NULL REFERENCES lots(id),
+                dimension_key TEXT NOT NULL,
+                dimension_value TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pg_lot_account ON lots(account_id);
+            CREATE INDEX IF NOT EXISTS idx_pg_lot_dims ON lot_dimensions(lot_id, dimension_key, dimension_value);
             ",
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -183,11 +211,12 @@ impl StorageBackend for PostgresStorage {
 
     fn create_account(&self, _entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
+        let unit_rate_id_opt = account.unit_rate_id.as_ref().map(|r| r.as_ref());
         client
             .execute(
-                "INSERT INTO accounts (id, account_type) VALUES ($1, $2)
-                 ON CONFLICT (id) DO UPDATE SET account_type = $2",
-                &[&account.id.as_ref(), &account_type_to_str(&account.account_type)],
+                "INSERT INTO accounts (id, account_type, unit_rate_id) VALUES ($1, $2, $3)
+                 ON CONFLICT (id) DO UPDATE SET account_type = $2, unit_rate_id = $3",
+                &[&account.id.as_ref(), &account_type_to_str(&account.account_type), &unit_rate_id_opt],
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(())
@@ -314,6 +343,99 @@ impl StorageBackend for PostgresStorage {
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
             }
+
+            // Handle lot creation for debits with units
+            if let LedgerEntryCommand::Debit { account_id, amount, units: Some(unit_count) } = entry {
+                let unit_rate_row = client
+                    .query_opt(
+                        "SELECT unit_rate_id FROM accounts WHERE id = $1",
+                        &[&account_id.as_ref()],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+
+                let unit_rate_id: Option<String> = unit_rate_row.and_then(|row| row.get(0));
+
+                if unit_rate_id.is_some() {
+                    let cost_per_unit = if !unit_count.is_zero() {
+                        *amount / *unit_count
+                    } else {
+                        Decimal::ZERO
+                    };
+                    let units_str = unit_count.to_string();
+                    let cpu_str = cost_per_unit.to_string();
+                    let lot_row = client
+                        .query_one(
+                            "INSERT INTO lots (account_id, date, units_remaining, cost_per_unit, journal_id)
+                             VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                            &[&account_id.as_ref(), &date_str, &units_str, &cpu_str, &jid],
+                        )
+                        .map_err(|e| StorageError::Other(e.to_string()))?;
+
+                    let lot_id: i64 = lot_row.get(0);
+                    for (k, v) in &command.dimensions {
+                        let dim_val = data_value_to_str(v);
+                        client
+                            .execute(
+                                "INSERT INTO lot_dimensions (lot_id, dimension_key, dimension_value)
+                                 VALUES ($1, $2, $3)",
+                                &[&lot_id, &k.as_ref(), &dim_val],
+                            )
+                            .map_err(|e| StorageError::Other(e.to_string()))?;
+                    }
+                }
+            }
+
+            // Handle lot depletion for credits with units (FIFO)
+            if let LedgerEntryCommand::Credit { account_id, units: Some(unit_count), .. } = entry {
+                let unit_rate_row = client
+                    .query_opt(
+                        "SELECT unit_rate_id FROM accounts WHERE id = $1",
+                        &[&account_id.as_ref()],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+
+                let unit_rate_id: Option<String> = unit_rate_row.and_then(|row| row.get(0));
+
+                if unit_rate_id.is_some() {
+                    let mut remaining = *unit_count;
+                    let lot_rows = client
+                        .query(
+                            "SELECT id, units_remaining FROM lots
+                             WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                             ORDER BY date ASC, id ASC",
+                            &[&account_id.as_ref()],
+                        )
+                        .map_err(|e| StorageError::Other(e.to_string()))?;
+
+                    for lot_row in &lot_rows {
+                        if remaining.is_zero() {
+                            break;
+                        }
+                        let lot_id: i64 = lot_row.get(0);
+                        let units_str: String = lot_row.get(1);
+                        let lot_units = Decimal::from_str(&units_str)
+                            .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                        if lot_units <= remaining {
+                            remaining -= lot_units;
+                            client
+                                .execute(
+                                    "UPDATE lots SET units_remaining = '0' WHERE id = $1",
+                                    &[&lot_id],
+                                )
+                                .map_err(|e| StorageError::Other(e.to_string()))?;
+                        } else {
+                            let new_remaining = (lot_units - remaining).to_string();
+                            remaining = Decimal::ZERO;
+                            client
+                                .execute(
+                                    "UPDATE lots SET units_remaining = $1 WHERE id = $2",
+                                    &[&new_remaining, &lot_id],
+                                )
+                                .map_err(|e| StorageError::Other(e.to_string()))?;
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -351,7 +473,8 @@ impl StorageBackend for PostgresStorage {
                          FROM ledger_entries le
                          JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                          WHERE le.account_id = $1 AND le.date <= $2
-                           AND led.dimension_key = $3 AND led.dimension_value = $4",
+                           AND led.dimension_key = $3
+                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $4 || '/%')",
                         &[&account_id, &date_str, &dim_key.as_ref(), &dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -424,7 +547,8 @@ impl StorageBackend for PostgresStorage {
                          FROM ledger_entries le
                          JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                          WHERE le.account_id = $1 AND le.date <= $2
-                           AND led.dimension_key = $3 AND led.dimension_value = $4",
+                           AND led.dimension_key = $3
+                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $4 || '/%')",
                         &[&account_id, &balance_date_str, &dim_key.as_ref(), &dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -453,7 +577,8 @@ impl StorageBackend for PostgresStorage {
                  JOIN journals j ON j.id = le.journal_id
                  JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                  WHERE le.account_id = $1 AND le.date {} $2 AND le.date {} $3
-                   AND led.dimension_key = $4 AND led.dimension_value = $5
+                   AND led.dimension_key = $4
+                   AND (led.dimension_value = $5 OR led.dimension_value LIKE $5 || '/%')
                  ORDER BY le.date, le.id",
                 from_op, to_op
             ),
@@ -594,28 +719,323 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
-    fn get_lots(&self, _entity_id: &str, _account_id: &str, _dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
-        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    fn get_lots(&self, _entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
+        let mut client = self.client.lock().unwrap();
+
+        let lot_rows: Vec<(i64, String, String, String)> = match dimension {
+            Some((dim_key, dim_val)) => {
+                let dim_val_str = data_value_to_str(dim_val);
+                let rows = client
+                    .query(
+                        "SELECT l.id, l.date, l.units_remaining, l.cost_per_unit FROM lots l
+                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0
+                           AND EXISTS (
+                             SELECT 1 FROM lot_dimensions ld
+                             WHERE ld.lot_id = l.id AND ld.dimension_key = $2
+                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $3 || '/%')
+                           )
+                         ORDER BY l.date ASC",
+                        &[&account_id, &dim_key.as_ref(), &dim_val_str],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                rows.iter()
+                    .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
+                    .collect()
+            }
+            None => {
+                let rows = client
+                    .query(
+                        "SELECT l.id, l.date, l.units_remaining, l.cost_per_unit FROM lots l
+                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0
+                         ORDER BY l.date ASC",
+                        &[&account_id],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                rows.iter()
+                    .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
+                    .collect()
+            }
+        };
+
+        let mut result = Vec::new();
+        for (lot_id, date_str, units_str, cpu_str) in lot_rows {
+            let units = Decimal::from_str(&units_str)
+                .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+            let cost_per_unit = Decimal::from_str(&cpu_str)
+                .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+
+            // Fetch dimensions for this lot
+            let mut dims = BTreeMap::new();
+            let dim_rows = client
+                .query(
+                    "SELECT dimension_key, dimension_value FROM lot_dimensions WHERE lot_id = $1",
+                    &[&lot_id],
+                )
+                .map_err(|e| StorageError::Other(e.to_string()))?;
+            for dim_row in &dim_rows {
+                let k: String = dim_row.get(0);
+                let v: String = dim_row.get(1);
+                dims.insert(Arc::from(k.as_str()), Arc::new(DataValue::String(Arc::from(v.as_str()))));
+            }
+
+            result.push(LotItem {
+                date: str_to_date(&date_str),
+                units,
+                cost_per_unit,
+                total_cost: units * cost_per_unit,
+                dimensions: dims,
+            });
+        }
+
+        Ok(result)
     }
 
-    fn get_total_units(&self, _entity_id: &str, _account_id: &str, _dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
-        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    fn get_total_units(&self, _entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
+        let mut client = self.client.lock().unwrap();
+
+        let total_str: String = match dimension {
+            Some((dim_key, dim_val)) => {
+                let dim_val_str = data_value_to_str(dim_val);
+                let row = client
+                    .query_one(
+                        "SELECT COALESCE(SUM(l.units_remaining::NUMERIC), 0)::TEXT FROM lots l
+                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0
+                           AND EXISTS (
+                             SELECT 1 FROM lot_dimensions ld
+                             WHERE ld.lot_id = l.id AND ld.dimension_key = $2
+                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $3 || '/%')
+                           )",
+                        &[&account_id, &dim_key.as_ref(), &dim_val_str],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                row.get(0)
+            }
+            None => {
+                let row = client
+                    .query_one(
+                        "SELECT COALESCE(SUM(l.units_remaining::NUMERIC), 0)::TEXT FROM lots l
+                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0",
+                        &[&account_id],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                row.get(0)
+            }
+        };
+
+        Decimal::from_str(&total_str)
+            .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))
     }
 
-    fn deplete_lots(&self, _entity_id: &str, _account_id: &str, _units: Decimal, _method: &CostMethod, _dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
-        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    fn deplete_lots(&self, _entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
+        let mut client = self.client.lock().unwrap();
+
+        let order = match method {
+            CostMethod::Fifo => "ASC",
+            CostMethod::Lifo => "DESC",
+            CostMethod::Average => "ASC",
+        };
+
+        // Build query with optional dimension filtering
+        let lot_rows: Vec<(i64, String, String)> = if dimensions.is_empty() {
+            let query = format!(
+                "SELECT id, units_remaining, cost_per_unit FROM lots
+                 WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                 ORDER BY date {order}, id {order}"
+            );
+            let rows = client
+                .query(&query, &[&account_id])
+                .map_err(|e| StorageError::Other(e.to_string()))?;
+            rows.iter()
+                .map(|r| (r.get(0), r.get(1), r.get(2)))
+                .collect()
+        } else {
+            // Build dimension filter: all dimension key/value pairs must match (prefix)
+            let dim_conditions: Vec<String> = dimensions.iter().enumerate().map(|(i, _)| {
+                let p1 = 2 + i * 2;
+                let p2 = 3 + i * 2;
+                format!(
+                    "EXISTS (SELECT 1 FROM lot_dimensions ld{i} WHERE ld{i}.lot_id = lots.id AND ld{i}.dimension_key = ${p1} AND (ld{i}.dimension_value = ${p2} OR ld{i}.dimension_value LIKE ${p2} || '/%'))"
+                )
+            }).collect();
+
+            let query = format!(
+                "SELECT id, units_remaining, cost_per_unit FROM lots
+                 WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                   AND {}
+                 ORDER BY date {order}, id {order}",
+                dim_conditions.join(" AND ")
+            );
+
+            // Build params: account_id + pairs of (key, value)
+            let mut param_values: Vec<String> = Vec::new();
+            param_values.push(account_id.to_string());
+            for (k, v) in dimensions {
+                param_values.push(k.to_string());
+                param_values.push(data_value_to_str(v));
+            }
+            let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+                param_values.iter().map(|s| s as &(dyn postgres::types::ToSql + Sync)).collect();
+
+            let rows = client
+                .query(&query, &param_refs)
+                .map_err(|e| StorageError::Other(e.to_string()))?;
+            rows.iter()
+                .map(|r| (r.get(0), r.get(1), r.get(2)))
+                .collect()
+        };
+
+        if matches!(method, CostMethod::Average) {
+            // Calculate weighted average cost across all matching lots
+            let mut total_units = Decimal::ZERO;
+            let mut total_cost = Decimal::ZERO;
+            for (_, units_str, cpu_str) in &lot_rows {
+                let lot_units = Decimal::from_str(units_str)
+                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                let cpu = Decimal::from_str(cpu_str)
+                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                total_units += lot_units;
+                total_cost += lot_units * cpu;
+            }
+
+            if total_units.is_zero() {
+                return Ok(Decimal::ZERO);
+            }
+
+            let avg_cost = total_cost / total_units;
+            let mut remaining = units;
+            let mut cost_basis = Decimal::ZERO;
+
+            for (lot_id, units_str, _) in &lot_rows {
+                if remaining.is_zero() {
+                    break;
+                }
+                let lot_units = Decimal::from_str(units_str)
+                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                if lot_units <= remaining {
+                    remaining -= lot_units;
+                    cost_basis += lot_units * avg_cost;
+                    client
+                        .execute(
+                            "UPDATE lots SET units_remaining = '0' WHERE id = $1",
+                            &[lot_id],
+                        )
+                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                } else {
+                    cost_basis += remaining * avg_cost;
+                    let new_remaining = (lot_units - remaining).to_string();
+                    remaining = Decimal::ZERO;
+                    client
+                        .execute(
+                            "UPDATE lots SET units_remaining = $1 WHERE id = $2",
+                            &[&new_remaining, lot_id],
+                        )
+                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                }
+            }
+
+            Ok(cost_basis)
+        } else {
+            // FIFO / LIFO
+            let mut remaining = units;
+            let mut cost_basis = Decimal::ZERO;
+
+            for (lot_id, units_str, cpu_str) in &lot_rows {
+                if remaining.is_zero() {
+                    break;
+                }
+                let lot_units = Decimal::from_str(units_str)
+                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                let cpu = Decimal::from_str(cpu_str)
+                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                if lot_units <= remaining {
+                    remaining -= lot_units;
+                    cost_basis += lot_units * cpu;
+                    client
+                        .execute(
+                            "UPDATE lots SET units_remaining = '0' WHERE id = $1",
+                            &[lot_id],
+                        )
+                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                } else {
+                    cost_basis += remaining * cpu;
+                    let new_remaining = (lot_units - remaining).to_string();
+                    remaining = Decimal::ZERO;
+                    client
+                        .execute(
+                            "UPDATE lots SET units_remaining = $1 WHERE id = $2",
+                            &[&new_remaining, lot_id],
+                        )
+                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                }
+            }
+
+            Ok(cost_basis)
+        }
     }
 
-    fn split_lots(&self, _entity_id: &str, _account_id: &str, _new_per_old: Decimal, _dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
-        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    fn split_lots(&self, _entity_id: &str, account_id: &str, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
+        let mut client = self.client.lock().unwrap();
+        let ratio_str = new_per_old.to_string();
+
+        match dimension {
+            Some((dim_key, dim_val)) => {
+                let dim_val_str = data_value_to_str(dim_val);
+                client
+                    .execute(
+                        "UPDATE lots SET
+                            units_remaining = (units_remaining::NUMERIC * $2::NUMERIC)::TEXT,
+                            cost_per_unit = (cost_per_unit::NUMERIC / $2::NUMERIC)::TEXT
+                         WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                           AND EXISTS (
+                             SELECT 1 FROM lot_dimensions ld
+                             WHERE ld.lot_id = lots.id AND ld.dimension_key = $3
+                               AND (ld.dimension_value = $4 OR ld.dimension_value LIKE $4 || '/%')
+                           )",
+                        &[&account_id, &ratio_str, &dim_key.as_ref(), &dim_val_str],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+            }
+            None => {
+                client
+                    .execute(
+                        "UPDATE lots SET
+                            units_remaining = (units_remaining::NUMERIC * $2::NUMERIC)::TEXT,
+                            cost_per_unit = (cost_per_unit::NUMERIC / $2::NUMERIC)::TEXT
+                         WHERE account_id = $1 AND units_remaining::NUMERIC > 0",
+                        &[&account_id, &ratio_str],
+                    )
+                    .map_err(|e| StorageError::Other(e.to_string()))?;
+            }
+        }
+
+        Ok(())
     }
 
-    fn get_unit_rate_id(&self, _entity_id: &str, _account_id: &str) -> Option<Arc<str>> {
-        None
+    fn get_unit_rate_id(&self, _entity_id: &str, account_id: &str) -> Option<Arc<str>> {
+        let mut client = self.client.lock().unwrap();
+        let result = client.query_opt(
+            "SELECT unit_rate_id FROM accounts WHERE id = $1",
+            &[&account_id],
+        );
+        match result {
+            Ok(Some(row)) => {
+                let val: Option<String> = row.get(0);
+                val.map(|s| Arc::from(s.as_str()))
+            }
+            _ => None,
+        }
     }
 
-    fn is_unit_account(&self, _entity_id: &str, _account_id: &str) -> bool {
-        false
+    fn is_unit_account(&self, _entity_id: &str, account_id: &str) -> bool {
+        let mut client = self.client.lock().unwrap();
+        let result = client.query_opt(
+            "SELECT unit_rate_id IS NOT NULL FROM accounts WHERE id = $1",
+            &[&account_id],
+        );
+        match result {
+            Ok(Some(row)) => row.get::<_, bool>(0),
+            _ => false,
+        }
     }
 }
 
