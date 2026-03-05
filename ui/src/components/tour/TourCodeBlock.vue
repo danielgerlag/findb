@@ -1,6 +1,6 @@
 <template>
-  <div class="tour-code-block" :class="{ 'highlight-flash': highlightActive }">
-    <pre ref="codeEl"><code><template v-for="(line, i) in displayLines" :key="i"><span
+  <div ref="codeEl" class="tour-code-block">
+    <pre><code><template v-for="(line, i) in displayLines" :key="i"><span
       :class="lineClasses(i)"
     ><span class="line-num">{{ i + 1 }}</span><span v-html="renderLine(line)"></span>
 </span></template></code></pre>
@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onUnmounted, nextTick } from 'vue'
 import { highlightFql } from '../../lib/fql-highlight'
 
 const props = withDefaults(defineProps<{
@@ -30,9 +30,39 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 const displayLines = computed(() => allLines.value.slice(0, revealedCount.value))
 
-// Controls whether highlight flash animation is active
-const highlightActive = ref(false)
-let flashTimer: ReturnType<typeof setTimeout> | null = null
+const codeEl = ref<HTMLElement | null>(null)
+let highlightTimers: ReturnType<typeof setTimeout>[] = []
+
+function clearHighlightTimers() {
+  highlightTimers.forEach(t => clearTimeout(t))
+  highlightTimers = []
+  // Remove any lingering flash classes
+  codeEl.value?.querySelectorAll('.hl-flash').forEach(el => el.classList.remove('hl-flash'))
+}
+
+// Sequentially flash each highlight group one at a time
+function startHighlightSequence() {
+  clearHighlightTimers()
+  if (!codeEl.value) return
+  const highlights = (props.highlight ?? []).filter(t => !t.startsWith('lines:'))
+  if (highlights.length === 0) return
+
+  const animDuration = 1400
+  const gap = 200
+
+  highlights.forEach((_, groupIdx) => {
+    const delay = groupIdx * (animDuration + gap)
+    const t = setTimeout(() => {
+      const marks = codeEl.value?.querySelectorAll(`[data-hl-group="${groupIdx}"]`)
+      marks?.forEach(el => {
+        el.classList.remove('hl-flash')
+        void (el as HTMLElement).offsetWidth // force reflow to restart animation
+        el.classList.add('hl-flash')
+      })
+    }, delay)
+    highlightTimers.push(t)
+  })
+}
 
 // Focus: parse lines:N-M
 const focusRange = computed<[number, number] | null>(() => {
@@ -51,40 +81,43 @@ function lineClasses(lineIdx: number): Record<string, boolean> {
 }
 
 function renderLine(line: string): string {
-  // First apply syntax highlighting
   let result = highlightFql(line)
-  // Then layer on tour highlights (mark tags) if any
   if (props.highlight && props.highlight.length > 0) {
-    for (const token of props.highlight) {
-      if (token.startsWith('lines:')) continue
+    props.highlight.forEach((token, groupIdx) => {
+      if (token.startsWith('lines:')) return
       const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       result = result.replace(
         new RegExp(`(${escaped})`, 'g'),
-        '<mark class="fqlt-highlight">$1</mark>'
+        `<mark class="fqlt-highlight" data-hl-group="${groupIdx}">$1</mark>`
       )
-    }
+    })
   }
   return result
+}
+
+function triggerHighlightAfterDelay() {
+  if (props.highlight && props.highlight.length > 0) {
+    const t = setTimeout(() => {
+      nextTick(() => startHighlightSequence())
+    }, 600)
+    highlightTimers.push(t)
+  }
 }
 
 watch(() => props.active, (active) => {
   if (active && props.reveal !== 'instant') {
     startReveal()
   }
-  // For instant reveal, trigger highlight flash on mount
-  if (active && props.reveal === 'instant' && props.highlight && props.highlight.length > 0) {
-    flashTimer = setTimeout(() => { highlightActive.value = true }, 600)
+  if (active && props.reveal === 'instant') {
+    triggerHighlightAfterDelay()
   }
 }, { immediate: true })
 
-// Also trigger flash after line-by-line reveal finishes
 function startReveal() {
   if (props.reveal === 'instant') {
     revealedCount.value = allLines.value.length
     emit('revealed')
-    if (props.highlight && props.highlight.length > 0) {
-      flashTimer = setTimeout(() => { highlightActive.value = true }, 600)
-    }
+    triggerHighlightAfterDelay()
     return
   }
   revealedCount.value = 0
@@ -95,27 +128,18 @@ function startReveal() {
       if (timer) clearInterval(timer)
       timer = null
       emit('revealed')
-      if (props.highlight && props.highlight.length > 0) {
-        flashTimer = setTimeout(() => { highlightActive.value = true }, 600)
-      }
+      triggerHighlightAfterDelay()
     }
   }, delay)
 }
 
-// When code changes (new step), reset reveal and trigger highlight flash
 watch(() => props.code, () => {
   if (timer) clearInterval(timer)
   timer = null
-  highlightActive.value = false
-  if (flashTimer) clearTimeout(flashTimer)
+  clearHighlightTimers()
   if (props.reveal === 'instant' || !props.active) {
     revealedCount.value = allLines.value.length
-    // Trigger flash after a short delay
-    if (props.highlight && props.highlight.length > 0) {
-      flashTimer = setTimeout(() => {
-        highlightActive.value = true
-      }, 600)
-    }
+    triggerHighlightAfterDelay()
   } else {
     revealedCount.value = 0
   }
@@ -123,7 +147,7 @@ watch(() => props.code, () => {
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
-  if (flashTimer) clearTimeout(flashTimer)
+  clearHighlightTimers()
 })
 </script>
 
@@ -173,16 +197,13 @@ code { color: #e2e8f0; }
   background: transparent;
   color: inherit;
 }
-.highlight-flash :deep(.fqlt-highlight) {
-  animation: highlight-pulse 2.2s ease-in-out;
+:deep(.fqlt-highlight.hl-flash) {
+  animation: highlight-pulse 1.4s ease-in-out;
 }
 @keyframes highlight-pulse {
   0%   { background: transparent; outline: 2px solid transparent; color: inherit; }
-  10%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); color: #fff !important; }
-  30%  { background: transparent; outline: 2px solid transparent; color: inherit; }
-  45%  { background: rgba(253, 224, 71, 0.45); outline: 2px solid rgba(253, 224, 71, 0.7); color: #fff !important; }
-  65%  { background: transparent; outline: 2px solid transparent; color: inherit; }
-  78%  { background: rgba(253, 224, 71, 0.3); outline: 2px solid rgba(253, 224, 71, 0.5); color: #fff !important; }
+  12%  { background: rgba(253, 224, 71, 0.5); outline: 2px solid rgba(253, 224, 71, 0.7); color: #fff !important; }
+  60%  { background: rgba(253, 224, 71, 0.35); outline: 2px solid rgba(253, 224, 71, 0.5); color: #fff !important; }
   100% { background: transparent; outline: 2px solid transparent; color: inherit; }
 }
 </style>
