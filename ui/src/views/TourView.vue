@@ -32,6 +32,11 @@
           <p>Manage rental properties with tenant tracking, security deposits, rent collection, and maintenance expenses.</p>
           <span class="tour-tag">intermediate</span>
         </div>
+        <div class="tour-card" @click="loadTour('investment-portfolio')">
+          <h4>📈 Managing an Investment Portfolio</h4>
+          <p>Track stock purchases, lot-based cost accounting, stock splits, and realized/unrealized gains using FIFO, LIFO, and average cost methods.</p>
+          <span class="tour-tag">intermediate</span>
+        </div>
       </div>
     </div>
 

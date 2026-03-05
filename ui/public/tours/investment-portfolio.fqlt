@@ -1,0 +1,183 @@
+---
+title: "Managing an Investment Portfolio"
+description: "Track stock purchases, lot-based cost accounting, stock splits, and realized/unrealized gains using FIFO, LIFO, and average cost methods."
+author: "DblEntry Team"
+difficulty: intermediate
+tags: [investments, stocks, lots, cost-basis, splits, gains]
+version: 1
+---
+
+--@ step: Setting Up the Portfolio
+--@ text: We need a **rate** to track each stock's price over time,
+--@   a **unit account** linked to that rate for holdings, plus the
+--@   usual cash and income accounts.
+--@
+--@   Notice `UNITS 'AAPL'` — this tells DblEntry to track
+--@   individual **lots** (purchase batches) on this account,
+--@   linked to the `AAPL` price rate.
+--@ highlight: UNITS, AAPL
+--@ note: A unit account behaves like a normal asset account for
+--@   double-entry balancing, but also tracks how many shares you
+--@   own and what you paid for each lot.
+
+CREATE RATE AAPL;
+CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @equity EQUITY;
+CREATE ACCOUNT @realized_gains INCOME;
+
+--@ step: Funding the Account
+--@ text: The investor deposits **$100,000** into the brokerage account.
+
+CREATE JOURNAL 2024-01-01, 100000, 'Initial deposit'
+  DEBIT @bank,
+  CREDIT @equity;
+
+--@ step: Buying Shares — First Purchase
+--@ text: We buy **100 shares** of AAPL at **$150** per share.
+--@   The `UNITS AT` syntax tells DblEntry this is a unit purchase —
+--@   it creates a **lot** recording the quantity and cost per share.
+--@
+--@   The total cost ($15,000) is debited from the stock account
+--@   and credited from the bank, keeping the books balanced.
+--@ highlight: UNITS AT
+--@ reveal: line-by-line
+
+SET RATE AAPL 150.00 2024-01-15;
+
+CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL @ $150'
+  DEBIT @aapl 100 UNITS AT 150,
+  CREDIT @bank;
+
+--@ step: Buying More at a Different Price
+--@ text: A month later, the stock has risen. We buy **50 more shares**
+--@   at **$170** each. DblEntry creates a **second lot** — we now
+--@   hold two separate batches at different cost bases.
+--@ note: This is just like real brokerage accounting. Each purchase
+--@   creates a distinct tax lot with its own cost basis.
+
+SET RATE AAPL 170.00 2024-02-15;
+
+CREATE JOURNAL 2024-02-15, 8500, 'Buy 50 AAPL @ $170'
+  DEBIT @aapl 50 UNITS AT 170,
+  CREDIT @bank;
+
+--@ step: Checking Our Position
+--@ text: Let's see what we own. The `lots()` function shows each
+--@   purchase batch. `units()` gives total shares. `market_value()`
+--@   multiplies shares × current price. `unrealized_gain()` is
+--@   the difference between market value and cost basis.
+--@ show: Lots, TotalUnits, CostBasis, MarketValue, UnrealizedGain
+--@ layout: split
+
+SET RATE AAPL 180.00 2024-03-15;
+
+GET lots(@aapl, 2024-03-15) AS Lots,
+    units(@aapl, 2024-03-15) AS TotalUnits,
+    balance(@aapl, 2024-03-15) AS CostBasis,
+    market_value(@aapl, 2024-03-15) AS MarketValue,
+    unrealized_gain(@aapl, 2024-03-15) AS UnrealizedGain
+
+--@ step: Selling Shares with FIFO
+--@ text: Time to take some profits. The `SELL` statement is a macro
+--@   that automatically:
+--@   1. **Depletes lots** using FIFO (oldest shares sold first)
+--@   2. Calculates the **cost basis** from those lots
+--@   3. Computes the **gain or loss** (proceeds − cost basis)
+--@   4. Creates a balanced journal entry
+--@
+--@   We sell 80 shares at $185. FIFO sells all 100 from Lot 1
+--@   first (cost $150), so 80 shares cost $12,000.
+--@   Proceeds = 80 × $185 = $14,800. Gain = **$2,800**.
+--@ highlight: SELL, FIFO, PROCEEDS, GAIN_LOSS
+--@ reveal: line-by-line
+--@ pause: 5
+
+SET RATE AAPL 185.00 2024-04-01;
+
+SELL 80 UNITS OF @aapl AT 185 ON 2024-04-01
+  METHOD FIFO
+  PROCEEDS @bank
+  GAIN_LOSS @realized_gains
+  DESCRIPTION 'Sell 80 AAPL (FIFO)';
+
+--@ step: After the FIFO Sale
+--@ text: Let's verify what happened. After selling 80 shares:
+--@   - **70 units remain** (20 from Lot 1 @ $150, 50 from Lot 2 @ $170)
+--@   - **Cost basis** = 20×150 + 50×170 = $11,500
+--@   - **Realized gain** = $2,800 (recorded as income)
+--@   - **Trial balance** still balances perfectly ✓
+--@ show: RemainingLots, Units, CostBasis, RealizedGain, TrialBalance
+--@ assert: Units = 70
+--@ layout: split
+
+GET lots(@aapl, 2024-04-01) AS RemainingLots,
+    units(@aapl, 2024-04-01) AS Units,
+    balance(@aapl, 2024-04-01) AS CostBasis,
+    balance(@realized_gains, 2024-04-01) AS RealizedGain,
+    trial_balance(2024-04-01) AS TrialBalance
+
+--@ step: Stock Split — 4 for 1
+--@ text: AAPL announces a **4-for-1 stock split**. The `SPLIT`
+--@   statement adjusts your lots — multiplying units by 4 and
+--@   dividing cost per unit by 4 — without touching the ledger.
+--@
+--@   Your **total cost basis stays the same** (same investment
+--@   value), but now you hold 4× as many shares at ¼ the cost each.
+--@ highlight: SPLIT, FOR
+--@ note: Splits create no taxable event and no journal entry.
+--@   Only the lot records change.
+
+SET RATE AAPL 46.25 2024-06-01;
+
+SPLIT @aapl 4 FOR 1 2024-06-01;
+
+--@ step: After the Split
+--@ text: Let's verify the split worked correctly:
+--@   - **280 units** (70 × 4)
+--@   - **Cost basis unchanged** at $11,500
+--@   - Lots now show the adjusted per-share costs
+--@   - Cost per unit: was $150 → now **$37.50**, was $170 → now **$42.50**
+--@ show: PostSplitLots, PostSplitUnits, PostSplitBasis, AvgCost
+--@ assert: PostSplitUnits = 280
+--@ layout: split
+
+GET lots(@aapl, 2024-06-01) AS PostSplitLots,
+    units(@aapl, 2024-06-01) AS PostSplitUnits,
+    balance(@aapl, 2024-06-01) AS PostSplitBasis,
+    cost_basis(@aapl, 2024-06-01) AS AvgCost
+
+--@ step: Final Sale — Post-Split
+--@ text: We sell **120 post-split shares** at **$50** each.
+--@   FIFO sells from the oldest lot first (the 80 remaining
+--@   shares from original Lot 1, now at $37.50 cost per share),
+--@   then 40 from Lot 2 at $42.50.
+--@
+--@   Cost basis = 80×37.50 + 40×42.50 = $3,000 + $1,700 = **$4,700**
+--@   Proceeds = 120 × $50 = **$6,000**. Gain = **$1,300**.
+--@ reveal: line-by-line
+--@ pause: 3
+
+SET RATE AAPL 50.00 2024-07-01;
+
+SELL 120 UNITS OF @aapl AT 50 ON 2024-07-01
+  METHOD FIFO
+  PROCEEDS @bank
+  GAIN_LOSS @realized_gains
+  DESCRIPTION 'Sell 120 post-split shares';
+
+--@ step: Final Portfolio Summary
+--@ text: Here's the complete picture after all trades:
+--@   - **160 shares** remaining (all from original Lot 2)
+--@   - **Total realized gains** across both sales
+--@   - **Unrealized gain** on remaining shares at current price
+--@   - The **trial balance** confirms everything balances ✓
+--@ show: FinalLots, FinalUnits, FinalCost, TotalGains, UnrealizedGain, TrialBalance
+--@ layout: split
+
+GET lots(@aapl, 2024-07-01) AS FinalLots,
+    units(@aapl, 2024-07-01) AS FinalUnits,
+    balance(@aapl, 2024-07-01) AS FinalCost,
+    balance(@realized_gains, 2024-07-01) AS TotalGains,
+    unrealized_gain(@aapl, 2024-07-01) AS UnrealizedGain,
+    trial_balance(2024-07-01) AS TrialBalance
