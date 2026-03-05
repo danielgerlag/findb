@@ -37,6 +37,11 @@
           <p>Track stock purchases, lot-based cost accounting, stock splits, and realized/unrealized gains using FIFO, LIFO, and average cost methods.</p>
           <span class="tour-tag">intermediate</span>
         </div>
+        <div class="tour-card" @click="loadTour('global-operations')">
+          <h4>🌍 Global Operations — Hierarchical Dimensions</h4>
+          <p>Track revenue and expenses across a geographic and departmental hierarchy with automatic roll-up queries at any level.</p>
+          <span class="tour-tag">intermediate</span>
+        </div>
       </div>
     </div>
 

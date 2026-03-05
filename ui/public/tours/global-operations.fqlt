@@ -1,0 +1,189 @@
+---
+title: "Global Operations — Hierarchical Dimensions"
+description: "Track revenue and expenses across a geographic and departmental hierarchy with automatic roll-up queries at any level."
+author: "DblEntry Team"
+difficulty: intermediate
+tags: [dimensions, hierarchical, roll-up, multi-dimensional, global]
+version: 1
+---
+
+--@ step: Setting Up the Chart of Accounts
+--@ text: A multinational company needs accounts to track money flowing
+--@   through a geographic and organizational hierarchy.
+--@
+--@   We'll use two **hierarchical dimensions**:
+--@   - **Region** — `Americas/US/NYC`, `EMEA/UK/London`, etc.
+--@   - **Dept** — `Engineering/Backend`, `Sales/Enterprise`, etc.
+--@
+--@   Values separated by `/` form a hierarchy — querying a parent
+--@   automatically includes all descendants.
+--@ highlight: ASSET, INCOME, EXPENSE
+--@ note: Hierarchical dimensions let you record transactions at
+--@   the most granular level and query at any level above it —
+--@   no pre-aggregation or separate rollup accounts needed.
+
+CREATE ACCOUNT @bank ASSET;
+CREATE ACCOUNT @revenue INCOME;
+CREATE ACCOUNT @salaries EXPENSE;
+CREATE ACCOUNT @travel EXPENSE;
+CREATE ACCOUNT @equity EQUITY;
+
+--@ step: Funding the Company
+--@ text: The company starts with **$500,000** in capital. This entry
+--@   has no dimensions — it's a company-wide transaction.
+
+CREATE JOURNAL 2024-01-01, 500000, 'Initial capital'
+  DEBIT @bank,
+  CREDIT @equity;
+
+--@ step: Recording Revenue Across the Globe
+--@ text: Sales teams close deals in five offices across two continents.
+--@   Each journal is tagged with both **Region** and **Dept** dimensions
+--@   using hierarchical paths like `Americas/US/NYC`.
+--@
+--@   This is where the magic happens — DblEntry indexes every
+--@   ancestor level automatically, so `Americas/US/NYC` is also
+--@   queryable as `Americas/US` and `Americas`.
+--@ highlight: FOR, Region, Dept
+--@ reveal: line-by-line
+--@ pause: 3
+
+CREATE JOURNAL 2024-01-15, 80000, 'Enterprise deal - NYC'
+  FOR Region='Americas/US/NYC', Dept='Sales/Enterprise'
+  DEBIT @bank,
+  CREDIT @revenue;
+
+CREATE JOURNAL 2024-01-20, 35000, 'SMB contracts - Los Angeles'
+  FOR Region='Americas/US/LA', Dept='Sales/SMB'
+  DEBIT @bank,
+  CREDIT @revenue;
+
+CREATE JOURNAL 2024-01-22, 25000, 'Enterprise deal - Toronto'
+  FOR Region='Americas/Canada/Toronto', Dept='Sales/Enterprise'
+  DEBIT @bank,
+  CREDIT @revenue;
+
+CREATE JOURNAL 2024-02-01, 60000, 'Enterprise deal - London'
+  FOR Region='EMEA/UK/London', Dept='Sales/Enterprise'
+  DEBIT @bank,
+  CREDIT @revenue;
+
+CREATE JOURNAL 2024-02-10, 40000, 'SMB contracts - Berlin'
+  FOR Region='EMEA/Germany/Berlin', Dept='Sales/SMB'
+  DEBIT @bank,
+  CREDIT @revenue;
+
+--@ step: Recording Expenses
+--@ text: Salaries and travel expenses are also tagged with
+--@   hierarchical dimensions. Engineering teams work in NYC
+--@   and London; sales teams travel across their regions.
+--@ reveal: line-by-line
+
+CREATE JOURNAL 2024-01-31, 45000, 'January salaries - NYC Engineering'
+  FOR Region='Americas/US/NYC', Dept='Engineering/Backend'
+  DEBIT @salaries,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-01-31, 38000, 'January salaries - London Engineering'
+  FOR Region='EMEA/UK/London', Dept='Engineering/Frontend'
+  DEBIT @salaries,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-01-31, 30000, 'January salaries - NYC Sales'
+  FOR Region='Americas/US/NYC', Dept='Sales/Enterprise'
+  DEBIT @salaries,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-01-31, 22000, 'January salaries - Berlin Sales'
+  FOR Region='EMEA/Germany/Berlin', Dept='Sales/SMB'
+  DEBIT @salaries,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-02-15, 5000, 'US sales travel'
+  FOR Region='Americas/US', Dept='Sales'
+  DEBIT @travel,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-02-20, 3500, 'EMEA sales travel'
+  FOR Region='EMEA', Dept='Sales'
+  DEBIT @travel,
+  CREDIT @bank;
+
+--@ step: Querying at Any Level — The Power of Hierarchies
+--@ text: Here's the key insight: **you never wrote a rollup query**.
+--@   DblEntry built the hierarchy automatically from the `/` paths.
+--@
+--@   - `Region='Americas'` sums NYC + LA + Toronto
+--@   - `Region='Americas/US'` sums just NYC + LA
+--@   - `Region='Americas/US/NYC'` gives exactly NYC
+--@
+--@   One account, one dimension — infinite drill-down.
+--@ highlight: Americas, Americas/US, Americas/US/NYC
+--@ note: Compare this to traditional systems where you'd need
+--@   separate accounts or manual rollup tables for each level.
+--@ layout: split
+
+GET balance(@revenue, 2024-03-01, Region='Americas') AS AllAmericas,
+    balance(@revenue, 2024-03-01, Region='Americas/US') AS JustUS,
+    balance(@revenue, 2024-03-01, Region='Americas/US/NYC') AS JustNYC,
+    balance(@revenue, 2024-03-01, Region='Americas/Canada') AS JustCanada,
+    balance(@revenue, 2024-03-01, Region='EMEA') AS AllEMEA,
+    balance(@revenue, 2024-03-01) AS GlobalTotal
+
+--@ step: Drilling into a Department Hierarchy
+--@ text: The same hierarchy works on the **Dept** dimension.
+--@   Query `Dept='Sales'` to get all sales (Enterprise + SMB),
+--@   or drill into `Sales/Enterprise` for just that segment.
+--@ layout: split
+
+GET balance(@revenue, 2024-03-01, Dept='Sales') AS AllSalesRevenue,
+    balance(@revenue, 2024-03-01, Dept='Sales/Enterprise') AS EnterpriseRevenue,
+    balance(@revenue, 2024-03-01, Dept='Sales/SMB') AS SMBRevenue,
+    balance(@salaries, 2024-03-01, Dept='Engineering') AS EngineeringSalaries,
+    balance(@salaries, 2024-03-01, Dept='Sales') AS SalesSalaries
+
+--@ step: Slicing by Either Dimension
+--@ text: You can query by **either** hierarchy independently.
+--@   Want to compare expenses across regions? Use `Region=`.
+--@   Want to compare departments? Use `Dept=`.
+--@
+--@   The same data, sliced from completely different angles —
+--@   **without creating separate accounts** for each combination.
+--@ highlight: Region, Dept
+--@ layout: split
+
+GET balance(@salaries, 2024-03-01, Region='Americas/US/NYC') AS NYC_Salaries,
+    balance(@salaries, 2024-03-01, Region='EMEA/UK/London') AS London_Salaries,
+    balance(@salaries, 2024-03-01, Region='EMEA') AS All_EMEA_Salaries,
+    balance(@salaries, 2024-03-01, Dept='Engineering') AS Engineering_Costs,
+    balance(@salaries, 2024-03-01, Dept='Sales') AS Sales_Costs,
+    balance(@travel, 2024-03-01, Region='Americas') AS Americas_Travel,
+    balance(@travel, 2024-03-01, Region='EMEA') AS EMEA_Travel
+
+--@ step: Transaction History with Hierarchical Filters
+--@ text: The `statement()` function also respects hierarchies.
+--@   Querying `Region='Americas'` returns every transaction
+--@   from NYC, LA, **and** Toronto — a full regional ledger
+--@   built automatically from the leaf-level data.
+--@ highlight: statement
+--@ layout: split
+
+GET statement(@revenue, 2024-01-01, 2024-03-01, Region='Americas') AS Americas_Revenue,
+    statement(@salaries, 2024-01-01, 2024-03-01, Region='EMEA') AS EMEA_Salaries
+
+--@ step: Company-Wide Financial Summary
+--@ text: Finally, queries **without** dimension filters always give
+--@   the company-wide totals. The trial balance confirms every
+--@   debit equals every credit across all dimensions.
+--@
+--@   From a single set of leaf-level journals, we've built:
+--@   - Global, continental, country, and city-level views
+--@   - Department and sub-department breakdowns
+--@   - Region and department analysis from any angle
+--@   - Full transaction history at any hierarchy level
+--@ show: TrialBalance, PnL, CashPosition
+--@ layout: split
+
+GET trial_balance(2024-03-01) AS TrialBalance,
+    income_statement(2024-01-01, 2024-03-01) AS PnL,
+    balance(@bank, 2024-03-01) AS CashPosition
