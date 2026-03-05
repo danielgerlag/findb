@@ -2657,3 +2657,455 @@ fn test_distribute_trial_balance() {
     ");
     assert_trial_balance_balanced(&results[0].variables["tb"], "distribute");
 }
+
+// ===== Dimensional Lots & Hierarchical Dimensions Tests =====
+
+#[test]
+fn test_dimensional_lots_buy_and_query() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL for Alice'
+            FOR Customer='Alice'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy AAPL for Bob'
+            FOR Customer='Bob'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+    ");
+
+    // Query total units (all pools)
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(150.into()));
+
+    // Query units for Alice only
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Customer='Alice') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(100.into()));
+
+    // Query units for Bob only
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Customer='Bob') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(50.into()));
+}
+
+#[test]
+fn test_dimensional_lots_sell_with_for() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        SET RATE aapl_price 180 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL for Alice'
+            FOR Customer='Alice'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy AAPL for Bob'
+            FOR Customer='Bob'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        SELL 30 UNITS OF @aapl AT 180 ON 2024-06-01
+            FOR Customer='Alice'
+            METHOD FIFO PROCEEDS @bank GAIN_LOSS @gains
+            DESCRIPTION 'Sell Alice shares';
+    ");
+
+    // Alice should have 70 units remaining
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Customer='Alice') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(70.into()));
+
+    // Bob should still have 50
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Customer='Bob') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(50.into()));
+
+    // Total should be 120
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(120.into()));
+}
+
+#[test]
+fn test_hierarchical_dimension_balance_prefix() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 1000, 'US West sale'
+            FOR Region='Americas/US/West'
+            DEBIT @bank,
+            CREDIT @revenue;
+
+        CREATE JOURNAL 2024-02-01, 2000, 'US East sale'
+            FOR Region='Americas/US/East'
+            DEBIT @bank,
+            CREDIT @revenue;
+
+        CREATE JOURNAL 2024-03-01, 500, 'Canada sale'
+            FOR Region='Americas/Canada'
+            DEBIT @bank,
+            CREDIT @revenue;
+
+        CREATE JOURNAL 2024-04-01, 3000, 'UK sale'
+            FOR Region='Europe/UK'
+            DEBIT @bank,
+            CREDIT @revenue;
+    ");
+
+    // Query exact leaf
+    let results = execute_script(&exec, &mut ctx, "GET balance(@revenue, 2024-12-31, Region='Americas/US/West') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(1000.into()));
+
+    // Query US level — should aggregate West + East = 3000
+    let results = execute_script(&exec, &mut ctx, "GET balance(@revenue, 2024-12-31, Region='Americas/US') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(3000.into()));
+
+    // Query Americas level — should aggregate US + Canada = 3500
+    let results = execute_script(&exec, &mut ctx, "GET balance(@revenue, 2024-12-31, Region='Americas') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(3500.into()));
+
+    // Query Europe — should be 3000
+    let results = execute_script(&exec, &mut ctx, "GET balance(@revenue, 2024-12-31, Region='Europe') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(3000.into()));
+
+    // Query Europe/UK — exact leaf
+    let results = execute_script(&exec, &mut ctx, "GET balance(@revenue, 2024-12-31, Region='Europe/UK') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(3000.into()));
+}
+
+#[test]
+fn test_hierarchical_dimension_lots() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        SET RATE aapl_price 200 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL US West'
+            FOR Region='Americas/US/West'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy AAPL US East'
+            FOR Region='Americas/US/East'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 3000, 'Buy AAPL Canada'
+            FOR Region='Americas/Canada'
+            DEBIT @aapl 20 UNITS AT 150,
+            CREDIT @bank;
+    ");
+
+    // Total units
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(170.into()));
+
+    // Units for Americas prefix — should aggregate all
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Region='Americas') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(170.into()));
+
+    // Units for Americas/US prefix — West + East = 150
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Region='Americas/US') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(150.into()));
+
+    // Units for exact leaf
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Region='Americas/US/West') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(100.into()));
+
+    // Market value for Americas prefix
+    let results = execute_script(&exec, &mut ctx, "GET market_value(@aapl, 2024-06-01, Region='Americas') AS mv");
+    assert_eq!(results[0].variables["mv"], DataValue::Money(34000.into())); // 170 * 200
+}
+
+#[test]
+fn test_hierarchical_sell_scoped_to_parent() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        SET RATE aapl_price 200 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL US West'
+            FOR Region='Americas/US/West'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy AAPL US East'
+            FOR Region='Americas/US/East'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 3000, 'Buy AAPL Canada'
+            FOR Region='Americas/Canada'
+            DEBIT @aapl 20 UNITS AT 150,
+            CREDIT @bank;
+
+        SELL 120 UNITS OF @aapl AT 200 ON 2024-06-01
+            FOR Region='Americas/US'
+            METHOD FIFO PROCEEDS @bank GAIN_LOSS @gains
+            DESCRIPTION 'Sell US region FIFO';
+    ");
+
+    // US/West had 100, US/East had 50 — FIFO depletes West first (100), then 20 from East
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Region='Americas/US/West') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(0.into()));
+
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Region='Americas/US/East') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(30.into()));
+
+    // Canada unaffected
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Region='Americas/Canada') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(20.into()));
+}
+
+#[test]
+fn test_sell_no_for_depletes_all_pools() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        SET RATE aapl_price 180 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL for Alice'
+            FOR Customer='Alice'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy AAPL for Bob'
+            FOR Customer='Bob'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        SELL 130 UNITS OF @aapl AT 180 ON 2024-06-01
+            METHOD FIFO PROCEEDS @bank GAIN_LOSS @gains
+            DESCRIPTION 'Sell all pools FIFO';
+    ");
+
+    // Total should be 20 remaining
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(20.into()));
+}
+
+#[test]
+fn test_multi_dimension_lots() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL Alice US'
+            FOR Customer='Alice', Region='US'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy AAPL Bob US'
+            FOR Customer='Bob', Region='US'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 6000, 'Buy AAPL Alice EU'
+            FOR Customer='Alice', Region='EU'
+            DEBIT @aapl 40 UNITS AT 150,
+            CREDIT @bank;
+    ");
+
+    // Total units
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(190.into()));
+
+    // Filter by Customer='Alice' — should get 100 + 40 = 140
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Customer='Alice') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(140.into()));
+
+    // Filter by Region='US' — should get 100 + 50 = 150
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Region='US') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(150.into()));
+}
+
+#[test]
+fn test_backward_compat_non_dimensional_lots() {
+    // Lots without dimensions should work exactly as before
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        SET RATE aapl_price 180 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy AAPL'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        SELL 60 UNITS OF @aapl AT 180 ON 2024-06-01
+            METHOD FIFO PROCEEDS @bank GAIN_LOSS @gains
+            DESCRIPTION 'Sell FIFO';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(90.into()));
+
+    // Gain: sold 60 FIFO. First 100 @ 150, so 60 @ 150 = 9000 cost. Proceeds 60*180=10800. Gain=1800
+    let results = execute_script(&exec, &mut ctx, "GET balance(@gains, 2024-12-31) AS g");
+    assert_eq!(results[0].variables["g"], DataValue::Money(1800.into()));
+}
+
+#[test]
+fn test_split_with_dimensional_lots() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy for Alice'
+            FOR Customer='Alice'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy for Bob'
+            FOR Customer='Bob'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        SPLIT @aapl 4 FOR 1 2024-06-01;
+    ");
+
+    // Split applies to all pools (no dimension filter on SPLIT currently)
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Customer='Alice') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(400.into()));
+
+    let results = execute_script(&exec, &mut ctx, "GET units(@aapl, 2024-12-31, Customer='Bob') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(200.into()));
+
+    // Cost basis should be divided by split ratio
+    let results = execute_script(&exec, &mut ctx, "GET cost_basis(@aapl, 2024-12-31, Customer='Alice') AS cb");
+    let cb = match &results[0].variables["cb"] {
+        DataValue::Money(d) => *d,
+        _ => panic!("Expected Money"),
+    };
+    // Original 150/unit, split 4:1 => 37.5/unit
+    assert_eq!(cb, rust_decimal::Decimal::new(375, 1));
+}
+
+#[test]
+fn test_lots_function_with_dimension() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE aapl_price;
+        SET RATE aapl_price 150 2024-01-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'aapl_price';
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy for Alice'
+            FOR Customer='Alice'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy for Bob'
+            FOR Customer='Bob'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+    ");
+
+    // lots() with dimension should only return Alice's lots
+    let results = execute_script(&exec, &mut ctx, "GET lots(@aapl, 2024-12-31, Customer='Alice') AS l");
+    match &results[0].variables["l"] {
+        DataValue::Lots(lots) => {
+            assert_eq!(lots.len(), 1);
+            assert_eq!(lots[0].units, 100.into());
+        },
+        _ => panic!("Expected Lots"),
+    }
+
+    // lots() without dimension should return all
+    let results = execute_script(&exec, &mut ctx, "GET lots(@aapl, 2024-12-31) AS l");
+    match &results[0].variables["l"] {
+        DataValue::Lots(lots) => {
+            assert_eq!(lots.len(), 2);
+        },
+        _ => panic!("Expected Lots"),
+    }
+}
+
+#[test]
+fn test_hierarchical_balance_with_statement() {
+    let (exec, mut ctx) = setup();
+
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 1000, 'US West Q1'
+            FOR Region='Americas/US/West'
+            DEBIT @bank,
+            CREDIT @revenue;
+
+        CREATE JOURNAL 2024-04-15, 2000, 'US East Q2'
+            FOR Region='Americas/US/East'
+            DEBIT @bank,
+            CREDIT @revenue;
+
+        CREATE JOURNAL 2024-07-15, 500, 'Canada Q3'
+            FOR Region='Americas/Canada'
+            DEBIT @bank,
+            CREDIT @revenue;
+    ");
+
+    // Statement for Americas should show all entries
+    let results = execute_script(&exec, &mut ctx, "GET statement(@revenue, 2024-01-01, 2024-12-31, Region='Americas') AS s");
+    match &results[0].variables["s"] {
+        DataValue::Statement(txns) => {
+            assert_eq!(txns.len(), 3);
+        },
+        _ => panic!("Expected Statement"),
+    }
+
+    // Statement for Americas/US should show only US entries (West + East)
+    let results = execute_script(&exec, &mut ctx, "GET statement(@revenue, 2024-01-01, 2024-12-31, Region='Americas/US') AS s");
+    match &results[0].variables["s"] {
+        DataValue::Statement(txns) => {
+            assert_eq!(txns.len(), 2);
+        },
+        _ => panic!("Expected Statement"),
+    }
+}

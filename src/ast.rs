@@ -106,6 +106,7 @@ pub struct SellCommand {
     pub proceeds_account: Arc<str>,
     pub gain_loss_account: Arc<str>,
     pub description: Expression,
+    pub dimensions: Vec<(Arc<str>, Expression)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

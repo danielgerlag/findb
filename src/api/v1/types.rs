@@ -87,6 +87,8 @@ pub struct LotItemDto {
     pub units: String,
     pub cost_per_unit: String,
     pub total_cost: String,
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub dimensions: std::collections::HashMap<String, String>,
 }
 
 #[derive(Serialize)]

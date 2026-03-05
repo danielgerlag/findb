@@ -37,6 +37,7 @@ pub struct Lot {
     pub units_remaining: Decimal,
     pub cost_per_unit: Decimal,
     pub journal_id: u128,
+    pub dimensions: BTreeMap<Arc<str>, Arc<DataValue>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -45,6 +46,7 @@ pub struct LotItem {
     pub units: Decimal,
     pub cost_per_unit: Decimal,
     pub total_cost: Decimal,
+    pub dimensions: BTreeMap<Arc<str>, Arc<DataValue>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]

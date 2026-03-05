@@ -163,6 +163,7 @@ impl StorageBackend for InMemoryStorage {
                                 units_remaining: *unit_count,
                                 cost_per_unit: if *unit_count != Decimal::ZERO { *amount / *unit_count } else { Decimal::ZERO },
                                 journal_id: jid,
+                                dimensions: command.dimensions.clone(),
                             });
                         }
                     }
@@ -263,47 +264,47 @@ impl StorageBackend for InMemoryStorage {
         Ok(())
     }
 
-    fn get_lots(&self, entity_id: &str, account_id: &str) -> Result<Vec<LotItem>, StorageError> {
+    fn get_lots(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
         let entities = self.entities.read().unwrap();
         let entity = entities.get(entity_id)
             .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
         match entity.lot_stores.get(account_id) {
-            Some(store) => Ok(store.open_lots()),
+            Some(store) => Ok(store.open_lots_filtered(dimension)),
             None => Err(StorageError::Other(format!("Account @{} is not a unit account", account_id))),
         }
     }
 
-    fn get_total_units(&self, entity_id: &str, account_id: &str) -> Result<Decimal, StorageError> {
+    fn get_total_units(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
         let entities = self.entities.read().unwrap();
         let entity = entities.get(entity_id)
             .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
         match entity.lot_stores.get(account_id) {
-            Some(store) => Ok(store.total_units()),
+            Some(store) => Ok(store.total_units_filtered(dimension)),
             None => Err(StorageError::Other(format!("Account @{} is not a unit account", account_id))),
         }
     }
 
-    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod) -> Result<Decimal, StorageError> {
+    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
         let mut entities = self.entities.write().unwrap();
         let entity = entities.get_mut(entity_id)
             .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
         let store = entity.lot_stores.get_mut(account_id)
             .ok_or_else(|| StorageError::Other(format!("Account @{} is not a unit account", account_id)))?;
         let cost = match method {
-            CostMethod::Fifo => store.deplete_fifo(units),
-            CostMethod::Lifo => store.deplete_lifo(units),
-            CostMethod::Average => store.deplete_average(units),
+            CostMethod::Fifo => store.deplete_fifo_filtered(units, dimensions),
+            CostMethod::Lifo => store.deplete_lifo_filtered(units, dimensions),
+            CostMethod::Average => store.deplete_average_filtered(units, dimensions),
         }.map_err(StorageError::Other)?;
         Ok(cost)
     }
 
-    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal) -> Result<(), StorageError> {
+    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
         let mut entities = self.entities.write().unwrap();
         let entity = entities.get_mut(entity_id)
             .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
         let store = entity.lot_stores.get_mut(account_id)
             .ok_or_else(|| StorageError::Other(format!("Account @{} is not a unit account", account_id)))?;
-        store.split(new_per_old);
+        store.split_filtered(new_per_old, dimension);
         Ok(())
     }
 
@@ -418,6 +419,16 @@ impl LedgerDay {
         for (k, v) in dimensions {
             let e = self.entry_by_dimension.entry((k.clone(), v.clone())).or_default();
             e.push(journal_id);
+            // Also index at ancestor prefixes for hierarchical matching
+            if let DataValue::String(s) = v.as_ref() {
+                for prefix in ancestor_prefixes(s) {
+                    let ancestor_val: Arc<DataValue> = Arc::new(DataValue::String(Arc::from(prefix.as_str())));
+                    let e = self.entry_by_dimension.entry((k.clone(), ancestor_val)).or_default();
+                    if !e.contains(&journal_id) {
+                        e.push(journal_id);
+                    }
+                }
+            }
         }
         
         self.increment_balance(dimensions, amount);
@@ -427,13 +438,20 @@ impl LedgerDay {
     fn increment_balance(&mut self, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>, amount: Decimal) {
         self.total += amount;
         for (dimension, value) in dimensions {
-            let sum = self.sum_by_dimension
+            let dim_map = self.sum_by_dimension
                 .entry(dimension.clone())
-                .or_default()
-                .entry(value.clone())
-                .or_insert(Decimal::ZERO);
-        
-            *sum += amount;
+                .or_default();
+            
+            // Store at exact value
+            *dim_map.entry(value.clone()).or_insert(Decimal::ZERO) += amount;
+            
+            // Also store at each ancestor prefix for hierarchical queries
+            if let DataValue::String(s) = value.as_ref() {
+                for prefix in ancestor_prefixes(s) {
+                    let ancestor_val: Arc<DataValue> = Arc::new(DataValue::String(Arc::from(prefix.as_str())));
+                    *dim_map.entry(ancestor_val).or_insert(Decimal::ZERO) += amount;
+                }
+            }
         }
     }
 
@@ -500,6 +518,71 @@ impl RateStore {
     }
 }
 
+/// Returns all proper ancestor prefixes of a `/`-separated path.
+/// e.g., "Americas/US/West" → ["Americas", "Americas/US"]
+fn ancestor_prefixes(path: &str) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    let mut pos = 0;
+    for (i, c) in path.char_indices() {
+        if c == '/' {
+            prefixes.push(path[..i].to_string());
+            pos = i + 1;
+        }
+    }
+    let _ = pos; // suppress unused
+    prefixes
+}
+
+/// Check if a lot matches a dimension filter with hierarchical prefix matching.
+/// A dimension value "Americas/US" matches "Americas", "Americas/US", but not "Americas/EU".
+fn dimension_matches(lot_dims: &BTreeMap<Arc<str>, Arc<DataValue>>, filter: &(Arc<str>, Arc<DataValue>)) -> bool {
+    let (key, filter_val) = filter;
+    match lot_dims.get(key.as_ref()) {
+        Some(lot_val) => {
+            if lot_val == filter_val {
+                return true;
+            }
+            // Hierarchical prefix match: filter "Americas" matches lot "Americas/US/West"
+            if let (DataValue::String(filter_s), DataValue::String(lot_s)) = (filter_val.as_ref(), lot_val.as_ref()) {
+                let prefix = filter_s.as_ref();
+                let value = lot_s.as_ref();
+                value.starts_with(prefix) && value.as_bytes().get(prefix.len()) == Some(&b'/')
+            } else {
+                false
+            }
+        }
+        None => false,
+    }
+}
+
+/// Check if a lot matches a full set of dimensions for exact pool matching.
+/// Empty dimensions map matches all lots (backward compatible).
+fn dimensions_match_exact(lot_dims: &BTreeMap<Arc<str>, Arc<DataValue>>, filter_dims: &BTreeMap<Arc<str>, Arc<DataValue>>) -> bool {
+    if filter_dims.is_empty() {
+        return true;
+    }
+    for (key, val) in filter_dims {
+        match lot_dims.get(key.as_ref()) {
+            Some(lot_val) => {
+                if lot_val != val {
+                    // Also try hierarchical prefix match
+                    if let (DataValue::String(filter_s), DataValue::String(lot_s)) = (val.as_ref(), lot_val.as_ref()) {
+                        let prefix = filter_s.as_ref();
+                        let value = lot_s.as_ref();
+                        if !(value == prefix || (value.starts_with(prefix) && value.as_bytes().get(prefix.len()) == Some(&b'/'))) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
 #[derive(Clone)]
 struct LotStoreData {
     lots: Vec<Lot>,
@@ -518,6 +601,16 @@ impl LotStoreData {
         self.lots.iter().map(|l| l.units_remaining).sum()
     }
 
+    fn total_units_filtered(&self, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Decimal {
+        match dimension {
+            Some(filter) => self.lots.iter()
+                .filter(|l| dimension_matches(&l.dimensions, filter))
+                .map(|l| l.units_remaining)
+                .sum(),
+            None => self.total_units(),
+        }
+    }
+
     fn open_lots(&self) -> Vec<LotItem> {
         self.lots.iter()
             .filter(|l| l.units_remaining > Decimal::ZERO)
@@ -526,8 +619,25 @@ impl LotStoreData {
                 units: l.units_remaining,
                 cost_per_unit: l.cost_per_unit,
                 total_cost: l.units_remaining * l.cost_per_unit,
+                dimensions: l.dimensions.clone(),
             })
             .collect()
+    }
+
+    fn open_lots_filtered(&self, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Vec<LotItem> {
+        match dimension {
+            Some(filter) => self.lots.iter()
+                .filter(|l| l.units_remaining > Decimal::ZERO && dimension_matches(&l.dimensions, filter))
+                .map(|l| LotItem {
+                    date: l.date,
+                    units: l.units_remaining,
+                    cost_per_unit: l.cost_per_unit,
+                    total_cost: l.units_remaining * l.cost_per_unit,
+                    dimensions: l.dimensions.clone(),
+                })
+                .collect(),
+            None => self.open_lots(),
+        }
     }
 
     fn deplete_fifo(&mut self, mut units: Decimal) -> Result<Decimal, String> {
@@ -546,6 +656,29 @@ impl LotStoreData {
         Ok(total_cost)
     }
 
+    fn deplete_fifo_filtered(&mut self, mut units: Decimal, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, String> {
+        if dimensions.is_empty() {
+            return self.deplete_fifo(units);
+        }
+        let available: Decimal = self.lots.iter()
+            .filter(|l| dimensions_match_exact(&l.dimensions, dimensions))
+            .map(|l| l.units_remaining)
+            .sum();
+        if units > available {
+            return Err(format!("Insufficient units: need {}, have {}", units, available));
+        }
+        let mut total_cost = Decimal::ZERO;
+        for lot in &mut self.lots {
+            if units <= Decimal::ZERO { break; }
+            if !dimensions_match_exact(&lot.dimensions, dimensions) { continue; }
+            let take = units.min(lot.units_remaining);
+            total_cost += take * lot.cost_per_unit;
+            lot.units_remaining -= take;
+            units -= take;
+        }
+        Ok(total_cost)
+    }
+
     fn deplete_lifo(&mut self, mut units: Decimal) -> Result<Decimal, String> {
         let available = self.total_units();
         if units > available {
@@ -554,6 +687,29 @@ impl LotStoreData {
         let mut total_cost = Decimal::ZERO;
         for lot in self.lots.iter_mut().rev() {
             if units <= Decimal::ZERO { break; }
+            let take = units.min(lot.units_remaining);
+            total_cost += take * lot.cost_per_unit;
+            lot.units_remaining -= take;
+            units -= take;
+        }
+        Ok(total_cost)
+    }
+
+    fn deplete_lifo_filtered(&mut self, mut units: Decimal, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, String> {
+        if dimensions.is_empty() {
+            return self.deplete_lifo(units);
+        }
+        let available: Decimal = self.lots.iter()
+            .filter(|l| dimensions_match_exact(&l.dimensions, dimensions))
+            .map(|l| l.units_remaining)
+            .sum();
+        if units > available {
+            return Err(format!("Insufficient units: need {}, have {}", units, available));
+        }
+        let mut total_cost = Decimal::ZERO;
+        for lot in self.lots.iter_mut().rev() {
+            if units <= Decimal::ZERO { break; }
+            if !dimensions_match_exact(&lot.dimensions, dimensions) { continue; }
             let take = units.min(lot.units_remaining);
             total_cost += take * lot.cost_per_unit;
             lot.units_remaining -= take;
@@ -584,11 +740,46 @@ impl LotStoreData {
         Ok(total_cost)
     }
 
-    fn split(&mut self, new_per_old: Decimal) {
+    fn deplete_average_filtered(&mut self, units: Decimal, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, String> {
+        if dimensions.is_empty() {
+            return self.deplete_average(units);
+        }
+        let available: Decimal = self.lots.iter()
+            .filter(|l| dimensions_match_exact(&l.dimensions, dimensions))
+            .map(|l| l.units_remaining)
+            .sum();
+        if units > available {
+            return Err(format!("Insufficient units: need {}, have {}", units, available));
+        }
+        let total_value: Decimal = self.lots.iter()
+            .filter(|l| dimensions_match_exact(&l.dimensions, dimensions))
+            .map(|l| l.units_remaining * l.cost_per_unit)
+            .sum();
+        let avg_cost = if available > Decimal::ZERO { total_value / available } else { Decimal::ZERO };
+        let total_cost = (units * avg_cost).round_dp(2);
+
+        let mut remaining = units;
         for lot in &mut self.lots {
-            lot.units_remaining *= new_per_old;
-            if new_per_old > Decimal::ZERO {
-                lot.cost_per_unit /= new_per_old;
+            if remaining <= Decimal::ZERO { break; }
+            if !dimensions_match_exact(&lot.dimensions, dimensions) { continue; }
+            let take = remaining.min(lot.units_remaining);
+            lot.units_remaining -= take;
+            remaining -= take;
+        }
+        Ok(total_cost)
+    }
+
+    fn split_filtered(&mut self, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) {
+        for lot in &mut self.lots {
+            let matches = match dimension {
+                Some(filter) => dimension_matches(&lot.dimensions, filter),
+                None => true,
+            };
+            if matches {
+                lot.units_remaining *= new_per_old;
+                if new_per_old > Decimal::ZERO {
+                    lot.cost_per_unit /= new_per_old;
+                }
             }
         }
     }

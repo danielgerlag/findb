@@ -321,7 +321,7 @@ peg::parser! {
             / kw_average() { CostMethod::Average }
 
         rule sell_command() -> SellCommand
-            = kw_sell() __+ units:expression() __+ kw_units() __+ kw_of() __+ account:account_id() __+ kw_at() __+ price:expression() __+ kw_on() __+ date:expression() __+ method:(kw_method() __+ m:cost_method() __+ { m })? kw_proceeds() __+ proceeds_account:account_id() __+ kw_gain_loss() __+ gain_loss_account:account_id() __+ kw_description() __+ description:expression() {
+            = kw_sell() __+ units:expression() __+ kw_units() __+ kw_of() __+ account:account_id() __+ kw_at() __+ price:expression() __+ kw_on() __+ date:expression() __* dims:(kw_for() __+ dims:dimensions() {dims})? __* method:(kw_method() __+ m:cost_method() { m })? __* kw_proceeds() __+ proceeds_account:account_id() __+ kw_gain_loss() __+ gain_loss_account:account_id() __+ kw_description() __+ description:expression() {
                 SellCommand {
                     units,
                     account,
@@ -331,6 +331,7 @@ peg::parser! {
                     proceeds_account,
                     gain_loss_account,
                     description,
+                    dimensions: dims.unwrap_or_default().into_iter().collect(),
                 }
             }
 

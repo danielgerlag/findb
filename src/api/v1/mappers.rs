@@ -106,6 +106,9 @@ fn map_lot_item(lot: &dblentry_core::models::LotItem) -> LotItemDto {
         units: lot.units.to_string(),
         cost_per_unit: lot.cost_per_unit.to_string(),
         total_cost: lot.total_cost.to_string(),
+        dimensions: lot.dimensions.iter()
+            .map(|(k, v)| (k.to_string(), format!("{}", v)))
+            .collect(),
     }
 }
 

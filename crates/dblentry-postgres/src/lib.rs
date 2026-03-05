@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     ops::Bound,
     str::FromStr,
     sync::{
@@ -594,19 +594,19 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
-    fn get_lots(&self, _entity_id: &str, _account_id: &str) -> Result<Vec<LotItem>, StorageError> {
+    fn get_lots(&self, _entity_id: &str, _account_id: &str, _dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
         Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
     }
 
-    fn get_total_units(&self, _entity_id: &str, _account_id: &str) -> Result<Decimal, StorageError> {
+    fn get_total_units(&self, _entity_id: &str, _account_id: &str, _dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
         Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
     }
 
-    fn deplete_lots(&self, _entity_id: &str, _account_id: &str, _units: Decimal, _method: &CostMethod) -> Result<Decimal, StorageError> {
+    fn deplete_lots(&self, _entity_id: &str, _account_id: &str, _units: Decimal, _method: &CostMethod, _dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
         Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
     }
 
-    fn split_lots(&self, _entity_id: &str, _account_id: &str, _new_per_old: Decimal) -> Result<(), StorageError> {
+    fn split_lots(&self, _entity_id: &str, _account_id: &str, _new_per_old: Decimal, _dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
         Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
     }
 

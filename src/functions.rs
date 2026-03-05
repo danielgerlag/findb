@@ -4,6 +4,14 @@ use rust_decimal::Decimal;
 
 use crate::{ast::AccountType, function_registry::ScalarFunction, models::{DataValue, TrialBalanceItem}, evaluator::{ExpressionEvaluationContext, EvaluationError}, storage::StorageBackend};
 
+/// Extract an optional dimension argument from function args at the given index.
+fn extract_dimension_arg(args: &[DataValue], index: usize) -> Option<(Arc<str>, Arc<DataValue>)> {
+    match args.get(index) {
+        Some(DataValue::Dimension((key, val))) => Some((key.clone(), val.clone())),
+        _ => None,
+    }
+}
+
 
 
 pub struct Balance {
@@ -361,7 +369,8 @@ impl ScalarFunction for Units {
             _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
         };
 
-        let total = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        let dim = extract_dimension_arg(&args, 2);
+        let total = self.storage.get_total_units(context.get_entity_id(), account_id, dim.as_ref())?;
         Ok(DataValue::Money(total))
     }
 }
@@ -389,7 +398,8 @@ impl ScalarFunction for MarketValue {
             _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
         };
 
-        let units = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        let dim = extract_dimension_arg(&args, 2);
+        let units = self.storage.get_total_units(context.get_entity_id(), account_id, dim.as_ref())?;
         let rate_id = self.storage.get_unit_rate_id(context.get_entity_id(), account_id)
             .ok_or_else(|| EvaluationError::InvalidArgument(format!("Account @{} has no linked rate", account_id)))?;
         let rate = self.storage.get_rate(context.get_entity_id(), &rate_id, date)?;
@@ -421,12 +431,13 @@ impl ScalarFunction for UnrealizedGain {
             _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
         };
 
-        let units = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        let dim = extract_dimension_arg(&args, 2);
+        let units = self.storage.get_total_units(context.get_entity_id(), account_id, dim.as_ref())?;
         let rate_id = self.storage.get_unit_rate_id(context.get_entity_id(), account_id)
             .ok_or_else(|| EvaluationError::InvalidArgument(format!("Account @{} has no linked rate", account_id)))?;
         let rate = self.storage.get_rate(context.get_entity_id(), &rate_id, date)?;
         let market_value = units * rate;
-        let cost_basis = self.storage.get_balance(context.get_entity_id(), account_id, date, None)?;
+        let cost_basis = self.storage.get_balance(context.get_entity_id(), account_id, date, dim.as_ref())?;
 
         Ok(DataValue::Money(market_value - cost_basis))
     }
@@ -455,12 +466,13 @@ impl ScalarFunction for CostBasis {
             _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
         };
 
-        let units = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        let dim = extract_dimension_arg(&args, 2);
+        let units = self.storage.get_total_units(context.get_entity_id(), account_id, dim.as_ref())?;
         if units == Decimal::ZERO {
             return Ok(DataValue::Money(Decimal::ZERO));
         }
 
-        let lots = self.storage.get_lots(context.get_entity_id(), account_id)?;
+        let lots = self.storage.get_lots(context.get_entity_id(), account_id, dim.as_ref())?;
         let total_cost: Decimal = lots.iter().map(|l| l.units * l.cost_per_unit).sum();
 
         Ok(DataValue::Money(total_cost / units))
@@ -490,7 +502,8 @@ impl ScalarFunction for Lots {
             _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
         };
 
-        let lots = self.storage.get_lots(context.get_entity_id(), account_id)?;
+        let dim = extract_dimension_arg(&args, 2);
+        let lots = self.storage.get_lots(context.get_entity_id(), account_id, dim.as_ref())?;
         Ok(DataValue::Lots(lots))
     }
 }

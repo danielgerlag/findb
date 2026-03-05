@@ -528,7 +528,15 @@ impl StatementExecutor {
         };
 
         let proceeds = units * price;
-        let cost_basis = self.storage.deplete_lots(&context.entity_id, &sell.account, units, &sell.method)?;
+
+        // Evaluate dimensions for the SELL
+        let mut dim_map = BTreeMap::new();
+        for (key, expr) in &sell.dimensions {
+            let val = self.expression_evaluator.evaluate_expression(&eval_ctx, expr)?;
+            dim_map.insert(key.clone(), Arc::new(val));
+        }
+
+        let cost_basis = self.storage.deplete_lots(&context.entity_id, &sell.account, units, &sell.method, &dim_map)?;
         let gain_or_loss = proceeds - cost_basis;
 
         let mut entries = vec![
@@ -562,7 +570,7 @@ impl StatementExecutor {
             date,
             description,
             amount: proceeds,
-            dimensions: BTreeMap::new(),
+            dimensions: dim_map,
             ledger_entries: entries,
         };
 
@@ -593,7 +601,7 @@ impl StatementExecutor {
         }
 
         let ratio = new_units / old_units;
-        self.storage.split_lots(&context.entity_id, &split.account, ratio)?;
+        self.storage.split_lots(&context.entity_id, &split.account, ratio, None)?;
 
         Ok(ExecutionResult::new())
     }

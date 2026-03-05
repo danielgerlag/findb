@@ -1,4 +1,4 @@
-use std::{collections::HashSet, ops::Bound, sync::Arc};
+use std::{collections::{BTreeMap, HashSet}, ops::Bound, sync::Arc};
 
 use rust_decimal::Decimal;
 use time::Date;
@@ -53,11 +53,11 @@ pub trait StorageBackend: Send + Sync {
     fn commit_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError>;
     fn rollback_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError>;
 
-    // Unit/lot operations
-    fn get_lots(&self, entity_id: &str, account_id: &str) -> Result<Vec<LotItem>, StorageError>;
-    fn get_total_units(&self, entity_id: &str, account_id: &str) -> Result<Decimal, StorageError>;
-    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod) -> Result<Decimal, StorageError>;
-    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal) -> Result<(), StorageError>;
+    // Unit/lot operations — dimension parameter enables filtering by dimension prefix
+    fn get_lots(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError>;
+    fn get_total_units(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError>;
+    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError>;
+    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError>;
     fn get_unit_rate_id(&self, entity_id: &str, account_id: &str) -> Option<Arc<str>>;
     fn is_unit_account(&self, entity_id: &str, account_id: &str) -> bool;
 }
