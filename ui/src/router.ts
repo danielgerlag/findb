@@ -5,6 +5,7 @@ import AccountsView from './views/AccountsView.vue'
 import JournalsView from './views/JournalsView.vue'
 import RatesView from './views/RatesView.vue'
 import TourView from './views/TourView.vue'
+import ReportsView from './views/ReportsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -15,6 +16,7 @@ const router = createRouter({
     { path: '/accounts', component: AccountsView },
     { path: '/journals', component: JournalsView },
     { path: '/rates', component: RatesView },
+    { path: '/reports', component: ReportsView },
   ],
 })
 

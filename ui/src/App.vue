@@ -10,6 +10,7 @@
       </div>
       <nav>
         <router-link to="/"><i class="pi pi-home"></i> Dashboard</router-link>
+        <router-link to="/reports"><i class="pi pi-chart-bar"></i> Reports</router-link>
         <router-link to="/query"><i class="pi pi-code"></i> FQL Query</router-link>
         <router-link to="/tour"><i class="pi pi-play"></i> Tours</router-link>
         <router-link to="/accounts"><i class="pi pi-book"></i> Accounts</router-link>
