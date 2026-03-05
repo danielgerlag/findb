@@ -43,6 +43,7 @@ tonic-build = "0.10"
 criterion = { version = "0.5", features = ["html_reports"] }
 dblentry-sqlite = { path = "crates/dblentry-sqlite" }
 dblentry-postgres = { path = "crates/dblentry-postgres" }
+paste = "1.0"
 postgres = "0.19"
 rust_decimal_macros = "1.31"
 

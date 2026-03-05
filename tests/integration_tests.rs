@@ -8,6 +8,35 @@ use dblentry::models::DataValue;
 use dblentry::statement_executor::{ExecutionContext, StatementExecutor};
 use dblentry::storage::InMemoryStorage;
 
+/// Generate the same test body against memory, SQLite, and PostgreSQL backends.
+/// Memory and SQLite variants run normally. PostgreSQL variants are `#[ignore]`.
+macro_rules! backend_test {
+    ($name:ident, $body:expr) => {
+        paste::paste! {
+            #[test]
+            fn [<$name _memory>]() {
+                let (exec, mut ctx) = setup();
+                $body(&exec, &mut ctx);
+            }
+            #[test]
+            fn [<$name _sqlite>]() {
+                let (exec, mut ctx) = setup_sqlite();
+                $body(&exec, &mut ctx);
+            }
+            #[test]
+            #[ignore]
+            fn [<$name _postgres>]() {
+                if !postgres_available() {
+                    eprintln!("Skipping PostgreSQL test: no connection available");
+                    return;
+                }
+                let (exec, mut ctx) = setup_postgres();
+                $body(&exec, &mut ctx);
+            }
+        }
+    };
+}
+
 fn register_functions(registry: &FunctionRegistry, storage: &Arc<dyn dblentry::storage::StorageBackend>) {
     registry.register_function("balance", Function::Scalar(Arc::new(Balance::new(storage.clone()))));
     registry.register_function("statement", Function::Scalar(Arc::new(Statement::new(storage.clone()))));
@@ -1871,7 +1900,9 @@ fn setup_postgres() -> (StatementExecutor, ExecutionContext) {
         .expect("Failed to connect to PostgreSQL for cleanup");
     client
         .batch_execute(
-            "DROP TABLE IF EXISTS ledger_entry_dimensions CASCADE;
+            "DROP TABLE IF EXISTS lot_dimensions CASCADE;
+             DROP TABLE IF EXISTS lots CASCADE;
+             DROP TABLE IF EXISTS ledger_entry_dimensions CASCADE;
              DROP TABLE IF EXISTS ledger_entries CASCADE;
              DROP TABLE IF EXISTS journal_dimensions CASCADE;
              DROP TABLE IF EXISTS journals CASCADE;
@@ -3109,3 +3140,194 @@ fn test_hierarchical_balance_with_statement() {
         _ => panic!("Expected Statement"),
     }
 }
+
+// ===== Cross-Backend Tests (backend_test! macro) =====
+
+backend_test!(cross_basic_balance, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE JOURNAL 2024-01-15, 1000, 'Sale'
+            DEBIT @bank,
+            CREDIT @revenue;
+        CREATE JOURNAL 2024-02-15, 500, 'Sale 2'
+            DEBIT @bank,
+            CREDIT @revenue;
+    ");
+    let results = execute_script(exec, ctx, "GET balance(@bank, 2024-12-31) AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(1500.into()));
+    let results = execute_script(exec, ctx, "GET balance(@revenue, 2024-12-31) AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(1500.into()));
+});
+
+backend_test!(cross_dimensional_balance, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @bank ASSET;
+        CREATE JOURNAL 2024-01-15, 1000, 'US sale'
+            FOR Region='US'
+            DEBIT @bank,
+            CREDIT @revenue;
+        CREATE JOURNAL 2024-02-15, 2000, 'EU sale'
+            FOR Region='EU'
+            DEBIT @bank,
+            CREDIT @revenue;
+    ");
+    let results = execute_script(exec, ctx, "GET balance(@revenue, 2024-12-31, Region='US') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(1000.into()));
+    let results = execute_script(exec, ctx, "GET balance(@revenue, 2024-12-31, Region='EU') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(2000.into()));
+    let results = execute_script(exec, ctx, "GET balance(@revenue, 2024-12-31) AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(3000.into()));
+});
+
+backend_test!(cross_hierarchical_balance, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @bank ASSET;
+        CREATE JOURNAL 2024-01-15, 1000, 'US West sale'
+            FOR Region='Americas/US/West'
+            DEBIT @bank,
+            CREDIT @revenue;
+        CREATE JOURNAL 2024-02-01, 2000, 'US East sale'
+            FOR Region='Americas/US/East'
+            DEBIT @bank,
+            CREDIT @revenue;
+        CREATE JOURNAL 2024-03-01, 500, 'Canada sale'
+            FOR Region='Americas/Canada'
+            DEBIT @bank,
+            CREDIT @revenue;
+    ");
+    let results = execute_script(exec, ctx, "GET balance(@revenue, 2024-12-31, Region='Americas/US') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(3000.into()));
+    let results = execute_script(exec, ctx, "GET balance(@revenue, 2024-12-31, Region='Americas') AS b");
+    assert_eq!(results[0].variables["b"], DataValue::Money(3500.into()));
+});
+
+backend_test!(cross_unit_buy_sell, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150 2024-01-01;
+        SET RATE AAPL 180 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        SELL 60 UNITS OF @aapl AT 180 ON 2024-06-01
+            METHOD FIFO PROCEEDS @bank GAIN_LOSS @gains
+            DESCRIPTION 'Sell FIFO';
+    ");
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(40.into()));
+    // Gain: 60*180 - 60*150 = 10800 - 9000 = 1800
+    let results = execute_script(exec, ctx, "GET balance(@gains, 2024-12-31) AS g");
+    assert_eq!(results[0].variables["g"], DataValue::Money(1800.into()));
+});
+
+backend_test!(cross_dimensional_lots, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150 2024-01-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy for Alice'
+            FOR Customer='Alice'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy for Bob'
+            FOR Customer='Bob'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+    ");
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31) AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(150.into()));
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31, Customer='Alice') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(100.into()));
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31, Customer='Bob') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(50.into()));
+});
+
+backend_test!(cross_hierarchical_lots, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150 2024-01-01;
+        SET RATE AAPL 200 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy US West'
+            FOR Region='Americas/US/West'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy US East'
+            FOR Region='Americas/US/East'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 3000, 'Buy Canada'
+            FOR Region='Americas/Canada'
+            DEBIT @aapl 20 UNITS AT 150,
+            CREDIT @bank;
+    ");
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31, Region='Americas') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(170.into()));
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31, Region='Americas/US') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(150.into()));
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31, Region='Americas/US/West') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(100.into()));
+});
+
+backend_test!(cross_sell_with_dimensions, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150 2024-01-01;
+        SET RATE AAPL 180 2024-06-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy for Alice'
+            FOR Customer='Alice'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-02-01, 8500, 'Buy for Bob'
+            FOR Customer='Bob'
+            DEBIT @aapl 50 UNITS AT 170,
+            CREDIT @bank;
+
+        SELL 30 UNITS OF @aapl AT 180 ON 2024-06-01
+            FOR Customer='Alice'
+            METHOD FIFO PROCEEDS @bank GAIN_LOSS @gains
+            DESCRIPTION 'Sell Alice shares';
+    ");
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31, Customer='Alice') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(70.into()));
+    let results = execute_script(exec, ctx, "GET units(@aapl, 2024-12-31, Customer='Bob') AS u");
+    assert_eq!(results[0].variables["u"], DataValue::Money(50.into()));
+});
+
+backend_test!(cross_trial_balance, |exec: &StatementExecutor, ctx: &mut ExecutionContext| {
+    execute_script(exec, ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE ACCOUNT @expenses EXPENSE;
+        CREATE JOURNAL 2024-01-15, 1000, 'Sale'
+            DEBIT @bank,
+            CREDIT @revenue;
+        CREATE JOURNAL 2024-02-15, 300, 'Expense'
+            DEBIT @expenses,
+            CREDIT @bank;
+    ");
+    let results = execute_script(exec, ctx, "GET trial_balance(2024-12-31) AS tb");
+    assert_trial_balance_balanced(&results[0].variables["tb"], "cross_trial_balance");
+});
