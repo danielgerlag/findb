@@ -181,3 +181,64 @@ GET lots(@aapl, 2024-07-01) AS FinalLots,
     balance(@realized_gains, 2024-07-01) AS TotalGains,
     unrealized_gain(@aapl, 2024-07-01) AS UnrealizedGain,
     trial_balance(2024-07-01) AS TrialBalance
+
+--@ step: Dimensional Lots — Per-Client Portfolios
+--@ text: DblEntry can track lots **per dimension** — for example,
+--@   managing investments on behalf of different clients.
+--@
+--@   The `FOR` clause on journal entries tags each purchase
+--@   with a dimension key, creating separate lot pools.
+--@ highlight: FOR, Customer
+--@ note: Dimensions on lots work with all cost methods (FIFO, LIFO,
+--@   AVERAGE) and all query functions (units, lots, market_value, etc).
+
+CREATE RATE TSLA;
+SET RATE TSLA 250 2024-08-01;
+CREATE ACCOUNT @tsla ASSET UNITS 'TSLA';
+
+CREATE JOURNAL 2024-08-01, 25000, 'Buy TSLA for Alice'
+  FOR Customer='Alice'
+  DEBIT @tsla 100 UNITS AT 250,
+  CREDIT @bank;
+
+CREATE JOURNAL 2024-08-15, 13000, 'Buy TSLA for Bob'
+  FOR Customer='Bob'
+  DEBIT @tsla 50 UNITS AT 260,
+  CREDIT @bank;
+
+--@ step: Querying by Client
+--@ text: Query functions accept an optional dimension filter.
+--@   This lets you see each client's position independently,
+--@   or the combined portfolio total.
+--@ show: AliceUnits, BobUnits, TotalUnits, AliceLots, BobLots
+--@ layout: split
+
+GET units(@tsla, 2024-08-15, Customer='Alice') AS AliceUnits,
+    units(@tsla, 2024-08-15, Customer='Bob') AS BobUnits,
+    units(@tsla, 2024-08-15) AS TotalUnits,
+    lots(@tsla, 2024-08-15, Customer='Alice') AS AliceLots,
+    lots(@tsla, 2024-08-15, Customer='Bob') AS BobLots
+
+--@ step: Selling for a Specific Client
+--@ text: The `SELL ... FOR` syntax depletes only from the
+--@   matching client's lots — Bob's shares are untouched.
+--@
+--@   Alice sells 40 shares at $280. FIFO depletes from her
+--@   lot (cost $250). Gain = 40×($280−$250) = **$1,200**.
+--@ highlight: FOR Customer
+--@ show: AliceRemaining, BobRemaining, TotalRemaining, RealizedGains
+--@ assert: AliceRemaining = 60
+
+SET RATE TSLA 280 2024-09-01;
+
+SELL 40 UNITS OF @tsla AT 280 ON 2024-09-01
+  FOR Customer='Alice'
+  METHOD FIFO
+  PROCEEDS @bank
+  GAIN_LOSS @realized_gains
+  DESCRIPTION 'Sell TSLA for Alice';
+
+GET units(@tsla, 2024-09-01, Customer='Alice') AS AliceRemaining,
+    units(@tsla, 2024-09-01, Customer='Bob') AS BobRemaining,
+    units(@tsla, 2024-09-01) AS TotalRemaining,
+    balance(@realized_gains, 2024-09-01) AS RealizedGains

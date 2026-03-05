@@ -21,6 +21,8 @@ GET balance(@loans, 2024-12-31, customer='Acme') AS acme_loans;
 
 **Returns:** Decimal balance.
 
+> **Hierarchical dimensions:** When a dimension value contains `/` path separators (e.g., `Region='Americas/US'`), the filter uses prefix matching. Querying `Region='Americas'` aggregates all values under `Americas/`, including `Americas/US/West`, `Americas/Canada`, etc.
+
 ---
 
 ### `statement()`
@@ -170,3 +172,102 @@ Returns the larger of two values.
 ```sql
 GET max(100, 200) AS m;  -- 200
 ```
+
+---
+
+## Unit-Tracking Functions
+
+These functions operate on unit-tracked accounts (created with the `UNITS` clause). All accept an optional dimension filter; hierarchical dimension values use prefix matching.
+
+### `units()`
+
+Returns the total number of units held in a unit-tracked account at a given date.
+
+```sql
+GET units(@stock_aapl, 2024-06-30) AS shares;
+GET units(@stock_aapl, 2024-06-30, Region='Americas/US') AS us_shares;
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account` | `@account_id` | Yes | A unit-tracked account |
+| `date` | `YYYY-MM-DD` | Yes | Effective date |
+| `dimension` | `key=value` | No | Filter by dimension |
+
+**Returns:** Decimal unit count.
+
+---
+
+### `market_value()`
+
+Returns the mark-to-market value of a unit-tracked account (units × current rate) at a given date.
+
+```sql
+GET market_value(@stock_aapl, 2024-06-30) AS portfolio_value;
+GET market_value(@stock_aapl, 2024-06-30, Sector='Technology') AS tech_value;
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account` | `@account_id` | Yes | A unit-tracked account |
+| `date` | `YYYY-MM-DD` | Yes | Effective date (rate looked up at this date) |
+| `dimension` | `key=value` | No | Filter by dimension |
+
+**Returns:** Decimal value (units × rate at date).
+
+---
+
+### `unrealized_gain()`
+
+Returns the unrealized gain or loss on a unit-tracked account (market value minus total cost basis).
+
+```sql
+GET unrealized_gain(@stock_aapl, 2024-06-30) AS gain;
+GET unrealized_gain(@stock_aapl, 2024-06-30, Region='Americas') AS americas_gain;
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account` | `@account_id` | Yes | A unit-tracked account |
+| `date` | `YYYY-MM-DD` | Yes | Effective date |
+| `dimension` | `key=value` | No | Filter by dimension |
+
+**Returns:** Decimal gain/loss (positive = gain, negative = loss).
+
+---
+
+### `cost_basis()`
+
+Returns the weighted average cost per unit across all open lots in a unit-tracked account.
+
+```sql
+GET cost_basis(@stock_aapl, 2024-06-30) AS avg_cost;
+GET cost_basis(@stock_aapl, 2024-06-30, Region='Americas/US/West') AS west_cost;
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account` | `@account_id` | Yes | A unit-tracked account |
+| `date` | `YYYY-MM-DD` | Yes | Effective date |
+| `dimension` | `key=value` | No | Filter by dimension |
+
+**Returns:** Decimal cost per unit.
+
+---
+
+### `lots()`
+
+Returns a table of all open lots in a unit-tracked account at a given date.
+
+```sql
+GET lots(@stock_aapl, 2024-06-30) AS open_lots;
+GET lots(@stock_aapl, 2024-06-30, Region='Americas') AS americas_lots;
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account` | `@account_id` | Yes | A unit-tracked account |
+| `date` | `YYYY-MM-DD` | Yes | Effective date |
+| `dimension` | `key=value` | No | Filter by dimension |
+
+**Returns:** Table with columns: `Date`, `Units`, `Cost Per Unit`, `Total Cost`.

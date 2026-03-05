@@ -7,7 +7,7 @@ Creates a named ledger account.
 **Syntax:**
 
 ```sql
-CREATE ACCOUNT @name TYPE;
+CREATE ACCOUNT @name TYPE [UNITS 'rate_id'];
 ```
 
 **Parameters:**
@@ -16,6 +16,7 @@ CREATE ACCOUNT @name TYPE;
 |-----------|-------------|
 | `@name` | Account identifier (letters, numbers, underscores) |
 | `TYPE` | One of: `ASSET`, `LIABILITY`, `INCOME`, `EXPENSE`, `EQUITY` |
+| `UNITS 'rate_id'` | Optional. Links the account to a rate for unit-based lot tracking |
 
 **Example:**
 
@@ -25,6 +26,10 @@ CREATE ACCOUNT @accounts_payable LIABILITY;
 CREATE ACCOUNT @equity EQUITY;
 CREATE ACCOUNT @sales_revenue INCOME;
 CREATE ACCOUNT @rent_expense EXPENSE;
+
+-- Unit-tracked account linked to a price rate
+CREATE ACCOUNT @stock_aapl ASSET UNITS 'aapl_price';
+CREATE ACCOUNT @gold_holdings ASSET UNITS 'gold_price';
 ```
 
 **Errors:**
@@ -41,8 +46,8 @@ Creates a double-entry transaction.
 ```sql
 CREATE JOURNAL date, amount, 'description'
   [FOR dimension=value, ...]
-  DEBIT @account [amount | percentage],
-  CREDIT @account [amount | percentage];
+  DEBIT @account [amount | percentage] [units UNITS AT price],
+  CREDIT @account [amount | percentage] [units UNITS AT price];
 ```
 
 **Parameters:**
@@ -54,8 +59,9 @@ CREATE JOURNAL date, amount, 'description'
 | `'description'` | Single-quoted description text |
 | `FOR ...` | Optional dimension tags (key-value pairs) |
 | `DEBIT/CREDIT` | Ledger operations — must balance |
+| `N UNITS AT price` | Optional. On a unit-tracked account, creates a lot with `N` units at the given cost per unit |
 
-Each ledger operation can optionally specify an amount (fixed or percentage). If omitted, the full journal amount is used.
+Each ledger operation can optionally specify an amount (fixed or percentage). If omitted, the full journal amount is used. For unit-tracked accounts, use `N UNITS AT price` to record lot details.
 
 **Examples:**
 
@@ -82,6 +88,17 @@ CREATE JOURNAL 2024-03-01, 1000, 'Revenue'
   DEBIT @bank,
   CREDIT @product_revenue 700,
   CREDIT @service_revenue 300;
+
+-- Unit-tracked purchase: buy 50 shares at $150 each
+CREATE JOURNAL 2024-04-01, 7500, 'Buy AAPL'
+  DEBIT @stock_aapl 50 UNITS AT 150,
+  CREDIT @bank;
+
+-- Unit-tracked purchase with dimensions
+CREATE JOURNAL 2024-04-15, 6200, 'Buy AAPL (East)'
+  FOR Region='Americas/US/East'
+  DEBIT @stock_aapl 40 UNITS AT 155,
+  CREDIT @bank;
 ```
 
 **Errors:**
@@ -287,6 +304,110 @@ DISTRIBUTE 2400
   DESCRIPTION 'Insurance amortization'
   DEBIT @insurance_expense,
   CREDIT @prepaid_insurance;
+```
+
+---
+
+## SELL
+
+Sells units from a unit-tracked account, depleting lots using a cost method and recording realized gain/loss.
+
+**Syntax:**
+
+```sql
+SELL units UNITS OF @account AT price ON date
+  [FOR dimension=value, ...]
+  [METHOD FIFO | LIFO | AVERAGE]
+  PROCEEDS @proceeds_account
+  GAIN_LOSS @gain_loss_account
+  DESCRIPTION 'text';
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `units` | Number of units to sell |
+| `@account` | The unit-tracked account to sell from |
+| `price` | Sale price per unit |
+| `date` | Transaction date (`YYYY-MM-DD`) |
+| `FOR ...` | Optional. Scopes lot depletion to lots matching the given dimensions |
+| `METHOD` | Cost method: `FIFO` (default), `LIFO`, or `AVERAGE` |
+| `PROCEEDS` | Account to receive the sale proceeds (units × price) |
+| `GAIN_LOSS` | Account to record realized gain or loss |
+| `DESCRIPTION` | Description text for the generated journal entries |
+
+**Cost Methods:**
+
+| Method | Behavior |
+|--------|----------|
+| `FIFO` (default) | Depletes oldest lots first |
+| `LIFO` | Depletes newest lots first |
+| `AVERAGE` | Uses weighted average cost basis across all lots |
+
+**Dimensional Scoping with FOR:**
+
+The `FOR` clause restricts which lots are eligible for depletion. With hierarchical dimension values (using `/` separators), matching uses prefix semantics — `FOR Region='Americas'` depletes lots tagged with `Americas/US/West`, `Americas/Canada`, etc., ordered by date within the chosen cost method.
+
+**Examples:**
+
+```sql
+-- Basic FIFO sale
+SELL 30 UNITS OF @stock_aapl AT 175 ON 2024-06-15
+  PROCEEDS @bank
+  GAIN_LOSS @realized_gains
+  DESCRIPTION 'Sell AAPL shares';
+
+-- LIFO sale scoped to a dimension
+SELL 10 UNITS OF @stock_aapl AT 180 ON 2024-07-01
+  FOR Region='Americas/US'
+  METHOD LIFO
+  PROCEEDS @bank
+  GAIN_LOSS @realized_gains
+  DESCRIPTION 'LIFO sale - US positions';
+
+-- Average cost sale
+SELL 25 UNITS OF @stock_aapl AT 170 ON 2024-08-15
+  METHOD AVERAGE
+  PROCEEDS @bank
+  GAIN_LOSS @realized_gains
+  DESCRIPTION 'Average cost sale';
+```
+
+---
+
+## SPLIT
+
+Records a stock split, adjusting all open lot units and cost basis proportionally.
+
+**Syntax:**
+
+```sql
+SPLIT @account new FOR old date;
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `@account` | The unit-tracked account |
+| `new` | New share count in the ratio |
+| `old` | Old share count in the ratio |
+| `date` | Effective date of the split (`YYYY-MM-DD`) |
+
+The ratio `new FOR old` describes the split. For a 2-for-1 split, each lot's units are doubled and cost per unit is halved.
+
+**Examples:**
+
+```sql
+-- 2-for-1 split: 50 shares at $150 → 100 shares at $75
+SPLIT @stock_aapl 2 FOR 1 2024-08-01;
+
+-- 3-for-2 split
+SPLIT @stock_aapl 3 FOR 2 2024-09-15;
+
+-- Reverse split: 1-for-4
+SPLIT @stock_aapl 1 FOR 4 2024-10-01;
 ```
 
 ---
