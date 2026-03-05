@@ -62,6 +62,9 @@ pub fn map_data_value(value: &DataValue) -> DataValueDto {
         DataValue::TrialBalance(items) => {
             DataValueDto::TrialBalance(items.iter().map(map_trial_balance_item).collect())
         }
+        DataValue::Lots(lots) => {
+            DataValueDto::Lots(lots.iter().map(map_lot_item).collect())
+        }
     }
 }
 
@@ -94,6 +97,15 @@ fn map_statement_txn(txn: &StatementTxn) -> StatementTxnDto {
         description: txn.description.to_string(),
         amount: txn.amount.to_string(),
         balance: txn.balance.to_string(),
+    }
+}
+
+fn map_lot_item(lot: &dblentry_core::models::LotItem) -> LotItemDto {
+    LotItemDto {
+        date: lot.date.to_string(),
+        units: lot.units.to_string(),
+        cost_per_unit: lot.cost_per_unit.to_string(),
+        total_cost: lot.total_cost.to_string(),
     }
 }
 

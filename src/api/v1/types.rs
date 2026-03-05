@@ -45,6 +45,8 @@ pub enum DataValueDto {
     Statement(Vec<StatementTxnDto>),
     #[serde(rename = "trial_balance")]
     TrialBalance(Vec<TrialBalanceItemDto>),
+    #[serde(rename = "lots")]
+    Lots(Vec<LotItemDto>),
 }
 
 #[derive(Serialize)]
@@ -77,6 +79,14 @@ pub struct DimensionDto {
 pub struct MapEntryDto {
     pub key: String,
     pub value: DataValueDto,
+}
+
+#[derive(Serialize)]
+pub struct LotItemDto {
+    pub date: String,
+    pub units: String,
+    pub cost_per_unit: String,
+    pub total_cost: String,
 }
 
 #[derive(Serialize)]

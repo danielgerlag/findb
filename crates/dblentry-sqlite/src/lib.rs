@@ -14,7 +14,7 @@ use time::{Date, Month, OffsetDateTime};
 use uuid::Uuid;
 
 use dblentry_core::{
-    AccountExpression, AccountType,
+    AccountExpression, AccountType, CostMethod, LotItem,
     CreateJournalCommand, CreateRateCommand, LedgerEntryCommand, SetRateCommand,
     DataValue, StatementTxn,
     StorageBackend, StorageError, TransactionId,
@@ -259,8 +259,8 @@ impl StorageBackend for SqliteStorage {
         // Look up account types for sign adjustment
         for entry in &command.ledger_entries {
             let (account_id, raw_amount) = match entry {
-                LedgerEntryCommand::Debit { account_id, amount } => (account_id, *amount),
-                LedgerEntryCommand::Credit { account_id, amount } => (account_id, -*amount),
+                LedgerEntryCommand::Debit { account_id, amount, .. } => (account_id, *amount),
+                LedgerEntryCommand::Credit { account_id, amount, .. } => (account_id, -*amount),
             };
 
             // Get account type for sign convention
@@ -582,6 +582,30 @@ impl StorageBackend for SqliteStorage {
         tracing::debug!(tx_id, "SQLite transaction rolled back");
         Ok(())
     }
+
+    fn get_lots(&self, _entity_id: &str, _account_id: &str) -> Result<Vec<LotItem>, StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn get_total_units(&self, _entity_id: &str, _account_id: &str) -> Result<Decimal, StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn deplete_lots(&self, _entity_id: &str, _account_id: &str, _units: Decimal, _method: &CostMethod) -> Result<Decimal, StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn split_lots(&self, _entity_id: &str, _account_id: &str, _new_per_old: Decimal) -> Result<(), StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn get_unit_rate_id(&self, _entity_id: &str, _account_id: &str) -> Option<Arc<str>> {
+        None
+    }
+
+    fn is_unit_account(&self, _entity_id: &str, _account_id: &str) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -598,12 +622,14 @@ mod tests {
             .create_account("default", &AccountExpression {
                 id: Arc::from("bank"),
                 account_type: AccountType::Asset,
+                unit_rate_id: None,
             })
             .unwrap();
         storage
             .create_account("default", &AccountExpression {
                 id: Arc::from("equity"),
                 account_type: AccountType::Equity,
+                unit_rate_id: None,
             })
             .unwrap();
 
@@ -617,10 +643,12 @@ mod tests {
                 LedgerEntryCommand::Credit {
                     account_id: Arc::from("equity"),
                     amount: Decimal::from(1000),
+                    units: None,
                 },
                 LedgerEntryCommand::Debit {
                     account_id: Arc::from("bank"),
                     amount: Decimal::from(1000),
+                    units: None,
                 },
             ],
             dimensions: BTreeMap::new(),
@@ -647,12 +675,14 @@ mod tests {
             .create_account("default", &AccountExpression {
                 id: Arc::from("bank"),
                 account_type: AccountType::Asset,
+                unit_rate_id: None,
             })
             .unwrap();
         storage
             .create_account("default", &AccountExpression {
                 id: Arc::from("equity"),
                 account_type: AccountType::Equity,
+                unit_rate_id: None,
             })
             .unwrap();
 
@@ -668,10 +698,12 @@ mod tests {
                     LedgerEntryCommand::Credit {
                         account_id: Arc::from("equity"),
                         amount: Decimal::from(500),
+                        units: None,
                     },
                     LedgerEntryCommand::Debit {
                         account_id: Arc::from("bank"),
                         amount: Decimal::from(500),
+                        units: None,
                     },
                 ],
                 dimensions: BTreeMap::new(),

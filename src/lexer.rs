@@ -73,6 +73,18 @@ peg::parser! {
         rule kw_yearly()    = ("YEARLY" / "yearly")
         rule kw_prorate()   = ("PRORATE" / "prorate")
         rule kw_description() = ("DESCRIPTION" / "description")
+        rule kw_units()     = ("UNITS" / "units")
+        rule kw_sell()      = ("SELL" / "sell")
+        rule kw_of()        = ("OF" / "of")
+        rule kw_at()        = ("AT" / "at")
+        rule kw_on()        = ("ON" / "on")
+        rule kw_method()    = ("METHOD" / "method")
+        rule kw_fifo()      = ("FIFO" / "fifo")
+        rule kw_lifo()      = ("LIFO" / "lifo")
+        rule kw_average()   = ("AVERAGE" / "average")
+        rule kw_proceeds()  = ("PROCEEDS" / "proceeds")
+        rule kw_gain_loss() = ("GAIN_LOSS" / "gain_loss")
+        rule kw_split()     = ("SPLIT" / "split")
 
         rule _()
             = [' ']
@@ -135,9 +147,14 @@ peg::parser! {
             / kw_null() { Literal::Null }
 
 
+        rule unit_spec() -> UnitSpec
+            = units:expression() __+ kw_units() __+ kw_at() __+ price:expression() { UnitSpec { units, price } }
+
         rule ledger_operation() -> LedgerOperation
-            = kw_debit() __+ account:account_id() __* amount:expression()? { LedgerOperation::Debit(LedgerOperationData { account, amount }) }
-            / kw_credit() __+ account:account_id() __* amount:expression()? { LedgerOperation::Credit(LedgerOperationData { account, amount }) }
+            = kw_debit() __+ account:account_id() __+ us:unit_spec() { LedgerOperation::Debit(LedgerOperationData { account, amount: None, unit_spec: Some(us) }) }
+            / kw_debit() __+ account:account_id() __* amount:expression()? { LedgerOperation::Debit(LedgerOperationData { account, amount, unit_spec: None }) }
+            / kw_credit() __+ account:account_id() __+ us:unit_spec() { LedgerOperation::Credit(LedgerOperationData { account, amount: None, unit_spec: Some(us) }) }
+            / kw_credit() __+ account:account_id() __* amount:expression()? { LedgerOperation::Credit(LedgerOperationData { account, amount, unit_spec: None }) }
 
         rule ledger_operations() -> Vec<LedgerOperation>
             = ledger_operations:(ledger_operation() ** (__* "," __*)) { ledger_operations }
@@ -235,12 +252,16 @@ peg::parser! {
             / kw_equity() { AccountType::Equity }
         
         rule account() -> AccountExpression
-            = kw_account() __* id:account_id() __+ account_type:account_type()  { 
+            = kw_account() __* id:account_id() __+ account_type:account_type() rate_id:(__+ u:units_clause() { u })? { 
                 AccountExpression { 
                     id, 
                     account_type,
+                    unit_rate_id: rate_id,
                 } 
             }
+
+        rule units_clause() -> Arc<str>
+            = kw_units() __+ rate_id:text() { rate_id }
 
         rule rate() -> CreateRateExpression
             = kw_rate() __* id:ident() { 
@@ -294,6 +315,35 @@ peg::parser! {
                 rate
             })}
 
+        rule cost_method() -> CostMethod
+            = kw_fifo() { CostMethod::Fifo }
+            / kw_lifo() { CostMethod::Lifo }
+            / kw_average() { CostMethod::Average }
+
+        rule sell_command() -> SellCommand
+            = kw_sell() __+ units:expression() __+ kw_units() __+ kw_of() __+ account:account_id() __+ kw_at() __+ price:expression() __+ kw_on() __+ date:expression() __+ method:(kw_method() __+ m:cost_method() __+ { m })? kw_proceeds() __+ proceeds_account:account_id() __+ kw_gain_loss() __+ gain_loss_account:account_id() __+ kw_description() __+ description:expression() {
+                SellCommand {
+                    units,
+                    account,
+                    price,
+                    date,
+                    method: method.unwrap_or(CostMethod::Fifo),
+                    proceeds_account,
+                    gain_loss_account,
+                    description,
+                }
+            }
+
+        rule split_command() -> SplitCommand
+            = kw_split() __+ account:account_id() __+ new_units:expression() __+ kw_for() __+ old_units:expression() __+ date:expression() {
+                SplitCommand {
+                    account,
+                    new_units,
+                    old_units,
+                    date,
+                }
+            }
+
         rule create_command() -> CreateCommand
             = kw_create() __+ kw_entity() __+ name:text()  { CreateCommand::Entity(name) }
             / kw_create() __* journal:journal()  { CreateCommand::Journal(journal) }
@@ -307,6 +357,8 @@ peg::parser! {
             / s:set_command() { Statement::Set(s) }
             / a:accrue_command() { Statement::Accrue(a) }
             / d:distribute_command() { Statement::Distribute(d) }
+            / sl:sell_command() { Statement::Sell(sl) }
+            / sp:split_command() { Statement::Split(sp) }
             / kw_begin() { Statement::Begin }
             / kw_commit() { Statement::Commit }
             / kw_rollback() { Statement::Rollback }

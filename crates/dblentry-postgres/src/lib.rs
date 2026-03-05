@@ -14,7 +14,7 @@ use time::{Date, Month, OffsetDateTime};
 use uuid::Uuid;
 
 use dblentry_core::{
-    AccountExpression, AccountType,
+    AccountExpression, AccountType, CostMethod, LotItem,
     CreateJournalCommand, CreateRateCommand, LedgerEntryCommand, SetRateCommand,
     DataValue, StatementTxn,
     StorageBackend, StorageError, TransactionId,
@@ -269,10 +269,12 @@ impl StorageBackend for PostgresStorage {
                 LedgerEntryCommand::Debit {
                     account_id,
                     amount,
+                    ..
                 } => (account_id, *amount),
                 LedgerEntryCommand::Credit {
                     account_id,
                     amount,
+                    ..
                 } => (account_id, -*amount),
             };
 
@@ -590,6 +592,30 @@ impl StorageBackend for PostgresStorage {
         *active = None;
         tracing::debug!(tx_id, "PostgreSQL transaction rolled back");
         Ok(())
+    }
+
+    fn get_lots(&self, _entity_id: &str, _account_id: &str) -> Result<Vec<LotItem>, StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn get_total_units(&self, _entity_id: &str, _account_id: &str) -> Result<Decimal, StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn deplete_lots(&self, _entity_id: &str, _account_id: &str, _units: Decimal, _method: &CostMethod) -> Result<Decimal, StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn split_lots(&self, _entity_id: &str, _account_id: &str, _new_per_old: Decimal) -> Result<(), StorageError> {
+        Err(StorageError::Other("Unit accounts not supported in this backend".to_string()))
+    }
+
+    fn get_unit_rate_id(&self, _entity_id: &str, _account_id: &str) -> Option<Arc<str>> {
+        None
+    }
+
+    fn is_unit_account(&self, _entity_id: &str, _account_id: &str) -> bool {
+        false
     }
 }
 

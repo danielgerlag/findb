@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dblentry::evaluator::{ExpressionEvaluator, QueryVariables};
 use dblentry::function_registry::{FunctionRegistry, Function};
-use dblentry::functions::{Balance, Statement, TrialBalance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max};
+use dblentry::functions::{Balance, Statement, TrialBalance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max, Units, MarketValue, UnrealizedGain, CostBasis, Lots};
 use dblentry::lexer;
 use dblentry::models::DataValue;
 use dblentry::statement_executor::{ExecutionContext, StatementExecutor};
@@ -20,6 +20,11 @@ fn register_functions(registry: &FunctionRegistry, storage: &Arc<dyn dblentry::s
     registry.register_function("abs", Function::Scalar(Arc::new(Abs)));
     registry.register_function("min", Function::Scalar(Arc::new(Min)));
     registry.register_function("max", Function::Scalar(Arc::new(Max)));
+    registry.register_function("units", Function::Scalar(Arc::new(Units::new(storage.clone()))));
+    registry.register_function("market_value", Function::Scalar(Arc::new(MarketValue::new(storage.clone()))));
+    registry.register_function("unrealized_gain", Function::Scalar(Arc::new(UnrealizedGain::new(storage.clone()))));
+    registry.register_function("cost_basis", Function::Scalar(Arc::new(CostBasis::new(storage.clone()))));
+    registry.register_function("lots", Function::Scalar(Arc::new(Lots::new(storage.clone()))));
 }
 
 fn setup() -> (StatementExecutor, ExecutionContext) {
@@ -1244,7 +1249,499 @@ fn assert_trial_balance_balanced(tb_val: &DataValue, label: &str) {
     }
 }
 
-// --- SQLite backend tests ---
+fn assert_money(val: &DataValue, expected: &str, label: &str) {
+    match val {
+        DataValue::Money(d) => {
+            let expected_dec: rust_decimal::Decimal = expected.parse().unwrap();
+            assert_eq!(*d, expected_dec, "{}: expected {} got {}", label, expected, d);
+        },
+        v => panic!("{}: expected Money, got {:?}", label, v),
+    }
+}
+
+// --- Unit-Based Asset Tracking Tests ---
+
+#[test]
+fn test_create_unit_account() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+    ");
+    // Should be able to query balance (zero)
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal;
+    ");
+    assert_money(&results[0].variables["bal"], "0", "zero balance");
+}
+
+#[test]
+fn test_buy_units_creates_lot() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150.00 2024-01-15;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u;
+    ");
+    assert_money(&results[0].variables["bal"], "15000", "cost basis");
+    assert_money(&results[0].variables["u"], "100", "units");
+}
+
+#[test]
+fn test_multiple_buys_multiple_lots() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150.00 2024-01-15;
+        SET RATE AAPL 170.00 2024-06-15;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 8000, 'Buy 50 more AAPL'
+            DEBIT @aapl 50 UNITS AT 160,
+            CREDIT @bank;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u,
+            market_value(@aapl, 2024-06-15) AS mv;
+    ");
+    assert_money(&results[0].variables["bal"], "23000", "cost basis");
+    assert_money(&results[0].variables["u"], "150", "total units");
+    assert_money(&results[0].variables["mv"], "25500", "market value 150 × 170");
+}
+
+#[test]
+fn test_sell_fifo() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 170.00 2024-06-15;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @realized_gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 8000, 'Buy 50 AAPL'
+            DEBIT @aapl 50 UNITS AT 160,
+            CREDIT @bank;
+
+        SELL 75 UNITS OF @aapl AT 170 ON 2024-06-15
+            METHOD FIFO
+            PROCEEDS @bank
+            GAIN_LOSS @realized_gains
+            DESCRIPTION 'Sell AAPL';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u,
+            balance(@realized_gains, 2024-12-31) AS gains,
+            balance(@bank, 2024-12-31) AS bank_bal;
+    ");
+    // FIFO: sells 75 from first lot (cost 150 each) = cost_basis 11250
+    // proceeds = 75 × 170 = 12750
+    // gain = 12750 - 11250 = 1500
+    // remaining: 25 @ 150 + 50 @ 160 = 3750 + 8000 = 11750
+    assert_money(&results[0].variables["bal"], "11750", "remaining cost basis");
+    assert_money(&results[0].variables["u"], "75", "remaining units");
+    assert_money(&results[0].variables["gains"], "1500", "realized gains");
+    // bank: started -15000 -8000 +12750 = -10250
+    assert_money(&results[0].variables["bank_bal"], "-10250", "bank balance");
+}
+
+#[test]
+fn test_sell_lifo() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 170.00 2024-06-15;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @realized_gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 8000, 'Buy 50 AAPL'
+            DEBIT @aapl 50 UNITS AT 160,
+            CREDIT @bank;
+
+        SELL 75 UNITS OF @aapl AT 170 ON 2024-06-15
+            METHOD LIFO
+            PROCEEDS @bank
+            GAIN_LOSS @realized_gains
+            DESCRIPTION 'Sell AAPL LIFO';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u,
+            balance(@realized_gains, 2024-12-31) AS gains;
+    ");
+    // LIFO: sells 50 from second lot (cost 160) + 25 from first lot (cost 150)
+    // cost_basis = 50×160 + 25×150 = 8000 + 3750 = 11750
+    // proceeds = 75 × 170 = 12750
+    // gain = 12750 - 11750 = 1000
+    // remaining: 75 @ 150 = 11250
+    assert_money(&results[0].variables["bal"], "11250", "remaining cost basis LIFO");
+    assert_money(&results[0].variables["u"], "75", "remaining units LIFO");
+    assert_money(&results[0].variables["gains"], "1000", "realized gains LIFO");
+}
+
+#[test]
+fn test_sell_average() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 170.00 2024-06-15;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @realized_gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 7500, 'Buy 50 AAPL'
+            DEBIT @aapl 50 UNITS AT 150,
+            CREDIT @bank;
+
+        SELL 75 UNITS OF @aapl AT 170 ON 2024-06-15
+            METHOD AVERAGE
+            PROCEEDS @bank
+            GAIN_LOSS @realized_gains
+            DESCRIPTION 'Sell AAPL average';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u,
+            balance(@realized_gains, 2024-12-31) AS gains;
+    ");
+    // AVERAGE: weighted avg cost = (15000+7500)/150 = 150 per unit
+    // cost_basis = 75 × 150 = 11250
+    // proceeds = 75 × 170 = 12750
+    // gain = 12750 - 11250 = 1500
+    // remaining: 75 units, cost = 22500 - 11250 = 11250
+    assert_money(&results[0].variables["bal"], "11250", "remaining cost basis AVG");
+    assert_money(&results[0].variables["u"], "75", "remaining units AVG");
+    assert_money(&results[0].variables["gains"], "1500", "realized gains AVG");
+}
+
+#[test]
+fn test_sell_with_loss() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 120.00 2024-06-15;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @realized_gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        SELL 50 UNITS OF @aapl AT 120 ON 2024-06-15
+            METHOD FIFO
+            PROCEEDS @bank
+            GAIN_LOSS @realized_gains
+            DESCRIPTION 'Sell at loss';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u,
+            balance(@realized_gains, 2024-12-31) AS gains;
+    ");
+    // cost_basis = 50 × 150 = 7500
+    // proceeds = 50 × 120 = 6000
+    // loss = 6000 - 7500 = -1500
+    // realized_gains is INCOME: debiting income reduces it, so balance should be -1500
+    assert_money(&results[0].variables["bal"], "7500", "remaining cost basis");
+    assert_money(&results[0].variables["u"], "50", "remaining units");
+    assert_money(&results[0].variables["gains"], "-1500", "realized loss");
+}
+
+#[test]
+fn test_split() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 37.50 2024-08-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        SPLIT @aapl 4 FOR 1 2024-08-01;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u,
+            cost_basis(@aapl, 2024-12-31) AS cb,
+            market_value(@aapl, 2024-08-01) AS mv;
+    ");
+    // Split 4:1: 100 shares → 400 shares, cost_per_unit 150 → 37.50
+    // Balance unchanged at 15000 (cost basis from ledger)
+    // Units = 400, cost_basis per unit = 37.50
+    // market_value = 400 × 37.50 = 15000
+    assert_money(&results[0].variables["bal"], "15000", "cost basis unchanged after split");
+    assert_money(&results[0].variables["u"], "400", "units after 4:1 split");
+    assert_money(&results[0].variables["cb"], "37.50", "cost per unit after split");
+    assert_money(&results[0].variables["mv"], "15000", "market value at split price");
+}
+
+#[test]
+fn test_split_then_sell() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 42.00 2024-09-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @realized_gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        SPLIT @aapl 4 FOR 1 2024-08-01;
+
+        SELL 200 UNITS OF @aapl AT 42 ON 2024-09-01
+            METHOD FIFO
+            PROCEEDS @bank
+            GAIN_LOSS @realized_gains
+            DESCRIPTION 'Sell after split';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@aapl, 2024-12-31) AS bal,
+            units(@aapl, 2024-12-31) AS u,
+            balance(@realized_gains, 2024-12-31) AS gains;
+    ");
+    // After split: 400 units @ 37.50 each
+    // Sell 200 @ 42: cost_basis = 200 × 37.50 = 7500, proceeds = 200 × 42 = 8400
+    // gain = 8400 - 7500 = 900
+    // remaining: 200 units, cost = 15000 - 7500 = 7500
+    assert_money(&results[0].variables["bal"], "7500", "remaining cost basis after split+sell");
+    assert_money(&results[0].variables["u"], "200", "remaining units after split+sell");
+    assert_money(&results[0].variables["gains"], "900", "gain after split+sell");
+}
+
+#[test]
+fn test_unrealized_gain() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150.00 2024-01-15;
+        SET RATE AAPL 170.00 2024-06-15;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET unrealized_gain(@aapl, 2024-06-15) AS ug;
+    ");
+    // market_value = 100 × 170 = 17000
+    // cost_basis = 15000
+    // unrealized_gain = 17000 - 15000 = 2000
+    assert_money(&results[0].variables["ug"], "2000", "unrealized gain");
+}
+
+#[test]
+fn test_lots_function() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 8000, 'Buy 50 AAPL'
+            DEBIT @aapl 50 UNITS AT 160,
+            CREDIT @bank;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET lots(@aapl, 2024-12-31) AS l;
+    ");
+    match &results[0].variables["l"] {
+        DataValue::Lots(lots) => {
+            assert_eq!(lots.len(), 2, "should have 2 lots");
+            assert_eq!(lots[0].units.to_string(), "100");
+            assert_eq!(lots[0].cost_per_unit.to_string(), "150");
+            assert_eq!(lots[1].units.to_string(), "50");
+            assert_eq!(lots[1].cost_per_unit.to_string(), "160");
+        },
+        v => panic!("Expected Lots, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_trial_balance_with_unit_accounts() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+
+        CREATE JOURNAL 2024-01-01, 50000, 'Initial equity'
+            DEBIT @bank,
+            CREDIT @equity;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET trial_balance(2024-12-31) AS tb;
+    ");
+    assert_trial_balance_balanced(&results[0].variables["tb"], "unit account trial balance");
+}
+
+#[test]
+fn test_sell_default_method_is_fifo() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @gains INCOME;
+
+        CREATE JOURNAL 2024-01-15, 10000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 100,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 12000, 'Buy 100 more AAPL'
+            DEBIT @aapl 100 UNITS AT 120,
+            CREDIT @bank;
+
+        SELL 100 UNITS OF @aapl AT 130 ON 2024-06-15
+            PROCEEDS @bank
+            GAIN_LOSS @gains
+            DESCRIPTION 'Sell without method';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@gains, 2024-12-31) AS gains;
+    ");
+    // Default FIFO: sells 100 from first lot @ 100 = cost 10000
+    // proceeds = 100 × 130 = 13000, gain = 3000
+    assert_money(&results[0].variables["gains"], "3000", "default FIFO gain");
+}
+
+#[test]
+fn test_non_unit_account_unaffected() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @revenue INCOME;
+        CREATE JOURNAL 2024-01-01, 5000, 'Revenue'
+            DEBIT @bank,
+            CREDIT @revenue;
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET balance(@bank, 2024-12-31) AS bal;
+    ");
+    assert_money(&results[0].variables["bal"], "5000", "non-unit account works normally");
+}
+
+#[test]
+fn test_full_investment_workflow() {
+    let (exec, mut ctx) = setup();
+    // Full workflow: buy → appreciate → partial sell → split → sell → verify
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE AAPL;
+        SET RATE AAPL 150.00 2024-01-15;
+        SET RATE AAPL 160.00 2024-03-01;
+        SET RATE AAPL 170.00 2024-06-15;
+        SET RATE AAPL 42.00 2024-08-01;
+        SET RATE AAPL 45.00 2024-09-01;
+        CREATE ACCOUNT @aapl ASSET UNITS 'AAPL';
+        CREATE ACCOUNT @bank ASSET;
+        CREATE ACCOUNT @equity EQUITY;
+        CREATE ACCOUNT @realized_gains INCOME;
+
+        CREATE JOURNAL 2024-01-01, 100000, 'Initial investment'
+            DEBIT @bank,
+            CREDIT @equity;
+
+        CREATE JOURNAL 2024-01-15, 15000, 'Buy 100 AAPL'
+            DEBIT @aapl 100 UNITS AT 150,
+            CREDIT @bank;
+
+        CREATE JOURNAL 2024-03-01, 8000, 'Buy 50 AAPL'
+            DEBIT @aapl 50 UNITS AT 160,
+            CREDIT @bank;
+
+        SELL 75 UNITS OF @aapl AT 170 ON 2024-06-15
+            METHOD FIFO
+            PROCEEDS @bank
+            GAIN_LOSS @realized_gains
+            DESCRIPTION 'Partial sell';
+
+        SPLIT @aapl 4 FOR 1 2024-08-01;
+
+        SELL 100 UNITS OF @aapl AT 45 ON 2024-09-01
+            METHOD FIFO
+            PROCEEDS @bank
+            GAIN_LOSS @realized_gains
+            DESCRIPTION 'Sell after split';
+    ");
+
+    let results = execute_script(&exec, &mut ctx, "
+        GET trial_balance(2024-12-31) AS tb,
+            units(@aapl, 2024-12-31) AS u,
+            balance(@aapl, 2024-12-31) AS aapl_bal,
+            balance(@realized_gains, 2024-12-31) AS gains;
+    ");
+
+    assert_trial_balance_balanced(&results[0].variables["tb"], "full investment workflow");
+
+    // After first sell FIFO: 75 units sold @ 150 cost, 25 remain @ 150 + 50 @ 160
+    // remaining balance: 25×150 + 50×160 = 3750 + 8000 = 11750, units = 75
+    // After 4:1 split: 300 units, lots: 100 @ 37.50 + 200 @ 40.00
+    // After sell 100 FIFO @ 45: cost = 100 × 37.50 = 3750, proceeds = 4500, gain = 750
+    // remaining: 200 @ 40.00 = 8000, units = 200
+    assert_money(&results[0].variables["u"], "200", "final units");
+    assert_money(&results[0].variables["aapl_bal"], "8000", "final cost basis");
+    // Total gains: first sell 1500 + second sell 750 = 2250
+    assert_money(&results[0].variables["gains"], "2250", "total realized gains");
+}
 
 fn setup_sqlite() -> (StatementExecutor, ExecutionContext) {
     use dblentry_sqlite::SqliteStorage;

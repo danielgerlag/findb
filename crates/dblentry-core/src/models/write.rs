@@ -16,8 +16,8 @@ pub struct CreateJournalCommand {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LedgerEntryCommand {
-    Debit {account_id: Arc<str>, amount: Decimal},
-    Credit {account_id: Arc<str>, amount: Decimal},
+    Debit {account_id: Arc<str>, amount: Decimal, units: Option<Decimal>},
+    Credit {account_id: Arc<str>, amount: Decimal, units: Option<Decimal>},
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -21,6 +21,30 @@ pub enum AccountType {
 pub struct AccountExpression {
     pub id: Arc<str>,
     pub account_type: AccountType,
+    pub unit_rate_id: Option<Arc<str>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CostMethod {
+    Fifo,
+    Lifo,
+    Average,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lot {
+    pub date: Date,
+    pub units_remaining: Decimal,
+    pub cost_per_unit: Decimal,
+    pub journal_id: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub struct LotItem {
+    pub date: Date,
+    pub units: Decimal,
+    pub cost_per_unit: Decimal,
+    pub total_cost: Decimal,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -38,6 +62,7 @@ pub enum DataValue {
     Dimension((Arc<str>, Arc<DataValue>)),
     Statement(Vec<StatementTxn>),
     TrialBalance(Vec<TrialBalanceItem>),
+    Lots(Vec<LotItem>),
 }
 
 impl DataValue {
@@ -85,6 +110,17 @@ impl Display for DataValue {
                             table.add_row(row![item.account_id, "", item.balance]);
                         },
                     }
+                }
+
+                format!("\n{}\n", table)
+            },
+            DataValue::Lots(lots) => {
+                let mut table = Table::new();
+                table.add_row(row!["Date", "Units", "Cost/Unit", "Total Cost"]);
+                table.add_empty_row();
+
+                for lot in lots {
+                    table.add_row(row![lot.date, lot.units, lot.cost_per_unit, lot.total_cost]);
                 }
 
                 format!("\n{}\n", table)

@@ -337,3 +337,160 @@ impl ScalarFunction for Max {
         Ok(DataValue::Money(a.max(b)))
     }
 }
+
+/// units(account, date) — Returns total units held in a unit-tracked account.
+pub struct Units {
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl Units {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self { storage }
+    }
+}
+
+impl ScalarFunction for Units {
+    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let account_id = match args.first() {
+            Some(DataValue::AccountId(id)) => id,
+            _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
+        };
+
+        let _date = match args.get(1) {
+            Some(DataValue::Date(d)) => *d,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let total = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        Ok(DataValue::Money(total))
+    }
+}
+
+/// market_value(account, date) — Returns units × rate at date.
+pub struct MarketValue {
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl MarketValue {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self { storage }
+    }
+}
+
+impl ScalarFunction for MarketValue {
+    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let account_id = match args.first() {
+            Some(DataValue::AccountId(id)) => id,
+            _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
+        };
+
+        let date = match args.get(1) {
+            Some(DataValue::Date(d)) => *d,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let units = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        let rate_id = self.storage.get_unit_rate_id(context.get_entity_id(), account_id)
+            .ok_or_else(|| EvaluationError::InvalidArgument(format!("Account @{} has no linked rate", account_id)))?;
+        let rate = self.storage.get_rate(context.get_entity_id(), &rate_id, date)?;
+
+        Ok(DataValue::Money(units * rate))
+    }
+}
+
+/// unrealized_gain(account, date) — Returns market_value - cost_basis (balance).
+pub struct UnrealizedGain {
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl UnrealizedGain {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self { storage }
+    }
+}
+
+impl ScalarFunction for UnrealizedGain {
+    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let account_id = match args.first() {
+            Some(DataValue::AccountId(id)) => id,
+            _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
+        };
+
+        let date = match args.get(1) {
+            Some(DataValue::Date(d)) => *d,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let units = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        let rate_id = self.storage.get_unit_rate_id(context.get_entity_id(), account_id)
+            .ok_or_else(|| EvaluationError::InvalidArgument(format!("Account @{} has no linked rate", account_id)))?;
+        let rate = self.storage.get_rate(context.get_entity_id(), &rate_id, date)?;
+        let market_value = units * rate;
+        let cost_basis = self.storage.get_balance(context.get_entity_id(), account_id, date, None)?;
+
+        Ok(DataValue::Money(market_value - cost_basis))
+    }
+}
+
+/// cost_basis(account, date) — Returns weighted average cost per unit.
+pub struct CostBasis {
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl CostBasis {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self { storage }
+    }
+}
+
+impl ScalarFunction for CostBasis {
+    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let account_id = match args.first() {
+            Some(DataValue::AccountId(id)) => id,
+            _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
+        };
+
+        let _date = match args.get(1) {
+            Some(DataValue::Date(d)) => *d,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let units = self.storage.get_total_units(context.get_entity_id(), account_id)?;
+        if units == Decimal::ZERO {
+            return Ok(DataValue::Money(Decimal::ZERO));
+        }
+
+        let lots = self.storage.get_lots(context.get_entity_id(), account_id)?;
+        let total_cost: Decimal = lots.iter().map(|l| l.units * l.cost_per_unit).sum();
+
+        Ok(DataValue::Money(total_cost / units))
+    }
+}
+
+/// lots(account, date) — Returns list of open lots.
+pub struct Lots {
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl Lots {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self { storage }
+    }
+}
+
+impl ScalarFunction for Lots {
+    fn call(&self, context: &ExpressionEvaluationContext, args: Vec<DataValue>) -> Result<DataValue, EvaluationError> {
+        let account_id = match args.first() {
+            Some(DataValue::AccountId(id)) => id,
+            _ => return Err(EvaluationError::InvalidArgument("account_id".to_string())),
+        };
+
+        let _date = match args.get(1) {
+            Some(DataValue::Date(d)) => *d,
+            _ => return Err(EvaluationError::InvalidArgument("date".to_string())),
+        };
+
+        let lots = self.storage.get_lots(context.get_entity_id(), account_id)?;
+        Ok(DataValue::Lots(lots))
+    }
+}

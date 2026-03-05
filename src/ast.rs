@@ -3,7 +3,7 @@ use std::{sync::Arc, collections::BTreeMap};
 use time::Date;
 
 // Re-export from dblentry-core so all existing crate::ast::AccountType references work
-pub use dblentry_core::models::{AccountType, AccountExpression};
+pub use dblentry_core::models::{AccountType, AccountExpression, CostMethod};
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +13,8 @@ pub enum Statement{
     Set(SetCommand),
     Accrue(AccrueCommand),
     Distribute(DistributeCommand),
+    Sell(SellCommand),
+    Split(SplitCommand),
     UseEntity(Arc<str>),
     Begin,
     Commit,
@@ -85,6 +87,33 @@ pub enum LedgerOperation {
 pub struct LedgerOperationData {
     pub account: Arc<str>,
     pub amount: Option<Expression>,
+    pub unit_spec: Option<UnitSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnitSpec {
+    pub units: Expression,
+    pub price: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SellCommand {
+    pub units: Expression,
+    pub account: Arc<str>,
+    pub price: Expression,
+    pub date: Expression,
+    pub method: CostMethod,
+    pub proceeds_account: Arc<str>,
+    pub gain_loss_account: Arc<str>,
+    pub description: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitCommand {
+    pub account: Arc<str>,
+    pub new_units: Expression,
+    pub old_units: Expression,
+    pub date: Expression,
 }
 
 #[derive(Debug, Clone, PartialEq)]

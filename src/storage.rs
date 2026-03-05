@@ -7,7 +7,7 @@ use uuid::Uuid;
 use dblentry_core::{
     AccountExpression, AccountType,
     CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand,
-    DataValue, JournalEntry, StatementTxn,
+    DataValue, JournalEntry, StatementTxn, Lot, LotItem, CostMethod,
 };
 
 // Re-export core storage types so existing code using crate::storage::* still works
@@ -21,6 +21,8 @@ struct EntityData {
     ledger_accounts: BTreeMap<Arc<str>, LedgerStore>,
     rates: BTreeMap<Arc<str>, RateStore>,
     journals: BTreeMap<u128, JournalEntry>,
+    lot_stores: BTreeMap<Arc<str>, LotStoreData>,
+    unit_rate_links: BTreeMap<Arc<str>, Arc<str>>,
 }
 
 impl EntityData {
@@ -29,6 +31,8 @@ impl EntityData {
             ledger_accounts: BTreeMap::new(),
             rates: BTreeMap::new(),
             journals: BTreeMap::new(),
+            lot_stores: BTreeMap::new(),
+            unit_rate_links: BTreeMap::new(),
         }
     }
 }
@@ -92,6 +96,10 @@ impl StorageBackend for InMemoryStorage {
         let entity = entities.get_mut(entity_id)
             .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
         entity.ledger_accounts.insert(account.id.clone(), LedgerStore::new(account.account_type.clone()));
+        if let Some(ref rate_id) = account.unit_rate_id {
+            entity.lot_stores.insert(account.id.clone(), LotStoreData::new());
+            entity.unit_rate_links.insert(account.id.clone(), rate_id.clone());
+        }
         Ok(())
     }
 
@@ -144,15 +152,31 @@ impl StorageBackend for InMemoryStorage {
 
         for ledger_entry in &command.ledger_entries {
             match ledger_entry {
-                LedgerEntryCommand::Debit {account_id, amount} => {
+                LedgerEntryCommand::Debit {account_id, amount, units} => {
                     let ledger_account = entity.ledger_accounts.get_mut(account_id)
                         .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
                     ledger_account.add_entry(command.date, jid, *amount, &command.dimensions);
+                    if let Some(unit_count) = units {
+                        if let Some(lot_store) = entity.lot_stores.get_mut(account_id) {
+                            lot_store.add_lot(Lot {
+                                date: command.date,
+                                units_remaining: *unit_count,
+                                cost_per_unit: if *unit_count != Decimal::ZERO { *amount / *unit_count } else { Decimal::ZERO },
+                                journal_id: jid,
+                            });
+                        }
+                    }
                 },
-                LedgerEntryCommand::Credit {account_id, amount} => {
+                LedgerEntryCommand::Credit {account_id, amount, units} => {
                     let ledger_account = entity.ledger_accounts.get_mut(account_id)
                         .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
                     ledger_account.add_entry(command.date, jid, -*amount, &command.dimensions);
+                    if let Some(unit_count) = units {
+                        if let Some(lot_store) = entity.lot_stores.get_mut(account_id) {
+                            lot_store.deplete_fifo(*unit_count)
+                                .map_err(StorageError::Other)?;
+                        }
+                    }
                 },
             }
         }
@@ -237,6 +261,63 @@ impl StorageBackend for InMemoryStorage {
         self.sequence_counter.store(snapshot.sequence_value, Ordering::SeqCst);
         tracing::debug!(tx_id, "Transaction rolled back");
         Ok(())
+    }
+
+    fn get_lots(&self, entity_id: &str, account_id: &str) -> Result<Vec<LotItem>, StorageError> {
+        let entities = self.entities.read().unwrap();
+        let entity = entities.get(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        match entity.lot_stores.get(account_id) {
+            Some(store) => Ok(store.open_lots()),
+            None => Err(StorageError::Other(format!("Account @{} is not a unit account", account_id))),
+        }
+    }
+
+    fn get_total_units(&self, entity_id: &str, account_id: &str) -> Result<Decimal, StorageError> {
+        let entities = self.entities.read().unwrap();
+        let entity = entities.get(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        match entity.lot_stores.get(account_id) {
+            Some(store) => Ok(store.total_units()),
+            None => Err(StorageError::Other(format!("Account @{} is not a unit account", account_id))),
+        }
+    }
+
+    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod) -> Result<Decimal, StorageError> {
+        let mut entities = self.entities.write().unwrap();
+        let entity = entities.get_mut(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        let store = entity.lot_stores.get_mut(account_id)
+            .ok_or_else(|| StorageError::Other(format!("Account @{} is not a unit account", account_id)))?;
+        let cost = match method {
+            CostMethod::Fifo => store.deplete_fifo(units),
+            CostMethod::Lifo => store.deplete_lifo(units),
+            CostMethod::Average => store.deplete_average(units),
+        }.map_err(StorageError::Other)?;
+        Ok(cost)
+    }
+
+    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal) -> Result<(), StorageError> {
+        let mut entities = self.entities.write().unwrap();
+        let entity = entities.get_mut(entity_id)
+            .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        let store = entity.lot_stores.get_mut(account_id)
+            .ok_or_else(|| StorageError::Other(format!("Account @{} is not a unit account", account_id)))?;
+        store.split(new_per_old);
+        Ok(())
+    }
+
+    fn get_unit_rate_id(&self, entity_id: &str, account_id: &str) -> Option<Arc<str>> {
+        let entities = self.entities.read().unwrap();
+        entities.get(entity_id)
+            .and_then(|e| e.unit_rate_links.get(account_id).cloned())
+    }
+
+    fn is_unit_account(&self, entity_id: &str, account_id: &str) -> bool {
+        let entities = self.entities.read().unwrap();
+        entities.get(entity_id)
+            .map(|e| e.lot_stores.contains_key(account_id))
+            .unwrap_or(false)
     }
 }
 
@@ -415,6 +496,100 @@ impl RateStore {
         match rates.next_back() {
             Some((_, rate)) => Ok(*rate),
             None => Err(StorageError::NoRateFound),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct LotStoreData {
+    lots: Vec<Lot>,
+}
+
+impl LotStoreData {
+    fn new() -> Self {
+        Self { lots: Vec::new() }
+    }
+
+    fn add_lot(&mut self, lot: Lot) {
+        self.lots.push(lot);
+    }
+
+    fn total_units(&self) -> Decimal {
+        self.lots.iter().map(|l| l.units_remaining).sum()
+    }
+
+    fn open_lots(&self) -> Vec<LotItem> {
+        self.lots.iter()
+            .filter(|l| l.units_remaining > Decimal::ZERO)
+            .map(|l| LotItem {
+                date: l.date,
+                units: l.units_remaining,
+                cost_per_unit: l.cost_per_unit,
+                total_cost: l.units_remaining * l.cost_per_unit,
+            })
+            .collect()
+    }
+
+    fn deplete_fifo(&mut self, mut units: Decimal) -> Result<Decimal, String> {
+        let available = self.total_units();
+        if units > available {
+            return Err(format!("Insufficient units: need {}, have {}", units, available));
+        }
+        let mut total_cost = Decimal::ZERO;
+        for lot in &mut self.lots {
+            if units <= Decimal::ZERO { break; }
+            let take = units.min(lot.units_remaining);
+            total_cost += take * lot.cost_per_unit;
+            lot.units_remaining -= take;
+            units -= take;
+        }
+        Ok(total_cost)
+    }
+
+    fn deplete_lifo(&mut self, mut units: Decimal) -> Result<Decimal, String> {
+        let available = self.total_units();
+        if units > available {
+            return Err(format!("Insufficient units: need {}, have {}", units, available));
+        }
+        let mut total_cost = Decimal::ZERO;
+        for lot in self.lots.iter_mut().rev() {
+            if units <= Decimal::ZERO { break; }
+            let take = units.min(lot.units_remaining);
+            total_cost += take * lot.cost_per_unit;
+            lot.units_remaining -= take;
+            units -= take;
+        }
+        Ok(total_cost)
+    }
+
+    fn deplete_average(&mut self, units: Decimal) -> Result<Decimal, String> {
+        let available = self.total_units();
+        if units > available {
+            return Err(format!("Insufficient units: need {}, have {}", units, available));
+        }
+        let total_value: Decimal = self.lots.iter()
+            .map(|l| l.units_remaining * l.cost_per_unit)
+            .sum();
+        let avg_cost = if available > Decimal::ZERO { total_value / available } else { Decimal::ZERO };
+        let total_cost = (units * avg_cost).round_dp(2);
+
+        // Deplete proportionally from all lots
+        let mut remaining = units;
+        for lot in &mut self.lots {
+            if remaining <= Decimal::ZERO { break; }
+            let take = remaining.min(lot.units_remaining);
+            lot.units_remaining -= take;
+            remaining -= take;
+        }
+        Ok(total_cost)
+    }
+
+    fn split(&mut self, new_per_old: Decimal) {
+        for lot in &mut self.lots {
+            lot.units_remaining *= new_per_old;
+            if new_per_old > Decimal::ZERO {
+                lot.cost_per_unit /= new_per_old;
+            }
         }
     }
 }

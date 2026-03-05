@@ -26,6 +26,8 @@ const KEYWORDS = new Set([
   'AND', 'OR', 'NOT', 'IS', 'EXISTS',
   'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
   'ID', 'LABEL',
+  'SELL', 'SPLIT', 'UNITS', 'OF', 'AT', 'ON', 'METHOD', 'PROCEEDS', 'GAIN_LOSS',
+  'FIFO', 'LIFO', 'AVERAGE',
 ])
 
 const TYPES = new Set([

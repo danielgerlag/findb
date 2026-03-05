@@ -5,7 +5,7 @@ use time::Date;
 
 use crate::models::{
     write::{CreateJournalCommand, CreateRateCommand, SetRateCommand},
-    AccountExpression, AccountType, DataValue,
+    AccountExpression, AccountType, DataValue, LotItem, CostMethod,
 };
 
 use thiserror::Error;
@@ -52,4 +52,12 @@ pub trait StorageBackend: Send + Sync {
     fn begin_transaction(&self) -> Result<TransactionId, StorageError>;
     fn commit_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError>;
     fn rollback_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError>;
+
+    // Unit/lot operations
+    fn get_lots(&self, entity_id: &str, account_id: &str) -> Result<Vec<LotItem>, StorageError>;
+    fn get_total_units(&self, entity_id: &str, account_id: &str) -> Result<Decimal, StorageError>;
+    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod) -> Result<Decimal, StorageError>;
+    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal) -> Result<(), StorageError>;
+    fn get_unit_rate_id(&self, entity_id: &str, account_id: &str) -> Option<Arc<str>>;
+    fn is_unit_account(&self, entity_id: &str, account_id: &str) -> bool;
 }

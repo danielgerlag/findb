@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use time::Date;
 
-use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation, DistributeCommand, Period}, storage::{StorageBackend, TransactionId, DEFAULT_ENTITY}, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
+use crate::{evaluator::{ExpressionEvaluator, QueryVariables, EvaluationError, ExpressionEvaluationContext}, ast::{Statement, JournalExpression, CreateCommand, self, AccountExpression, GetExpression, CreateRateExpression, SetCommand, SetRateExpression, AccrueCommand, Compounding, LedgerOperation, DistributeCommand, Period, SellCommand, SplitCommand}, storage::{StorageBackend, TransactionId, DEFAULT_ENTITY}, models::{write::{CreateJournalCommand, LedgerEntryCommand, CreateRateCommand, SetRateCommand}, DataValue}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionContext {
@@ -93,6 +93,8 @@ impl StatementExecutor {
             Statement::Get(get) => self.get(context, get)?,
             Statement::Accrue(accrue) => self.accrue(context, accrue)?,
             Statement::Distribute(distribute) => self.distribute(context, distribute)?,
+            Statement::Sell(sell) => self.sell(context, sell)?,
+            Statement::Split(split) => self.split(context, split)?,
             Statement::Set(s) => match s {
                 SetCommand::Rate(r) => self.set_rate(context, r)?,
             },
@@ -206,30 +208,68 @@ impl StatementExecutor {
         for op in operations {
             let cmd = match op {
                 ast::LedgerOperation::Debit(op) => {
-                    LedgerEntryCommand::Debit {
-                        account_id: op.account.clone(),
-                        amount: match &op.amount {
-                            Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, amount)? {
-                                DataValue::Money(d) => d,
-                                DataValue::Int(i) => Decimal::from(i),
-                                DataValue::Percentage(p) => journal_amount * p,
-                                _ => return Err(EvaluationError::InvalidType),
+                    if let Some(us) = &op.unit_spec {
+                        let units = match self.expression_evaluator.evaluate_expression(eval_ctx, &us.units)? {
+                            DataValue::Money(d) => d,
+                            DataValue::Int(i) => Decimal::from(i),
+                            _ => return Err(EvaluationError::InvalidType),
+                        };
+                        let price = match self.expression_evaluator.evaluate_expression(eval_ctx, &us.price)? {
+                            DataValue::Money(d) => d,
+                            DataValue::Int(i) => Decimal::from(i),
+                            _ => return Err(EvaluationError::InvalidType),
+                        };
+                        LedgerEntryCommand::Debit {
+                            account_id: op.account.clone(),
+                            amount: units * price,
+                            units: Some(units),
+                        }
+                    } else {
+                        LedgerEntryCommand::Debit {
+                            account_id: op.account.clone(),
+                            amount: match &op.amount {
+                                Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, amount)? {
+                                    DataValue::Money(d) => d,
+                                    DataValue::Int(i) => Decimal::from(i),
+                                    DataValue::Percentage(p) => journal_amount * p,
+                                    _ => return Err(EvaluationError::InvalidType),
+                                },
+                                None => journal_amount,
                             },
-                            None => journal_amount,
+                            units: None,
                         }
                     }
                 },
                 ast::LedgerOperation::Credit(op) => {
-                    LedgerEntryCommand::Credit {
-                        account_id: op.account.clone(),
-                        amount: match &op.amount {
-                            Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, amount)? {
-                                DataValue::Money(d) => d,
-                                DataValue::Int(i) => Decimal::from(i),
-                                DataValue::Percentage(p) => journal_amount * p,
-                                _ => return Err(EvaluationError::InvalidType),
+                    if let Some(us) = &op.unit_spec {
+                        let units = match self.expression_evaluator.evaluate_expression(eval_ctx, &us.units)? {
+                            DataValue::Money(d) => d,
+                            DataValue::Int(i) => Decimal::from(i),
+                            _ => return Err(EvaluationError::InvalidType),
+                        };
+                        let price = match self.expression_evaluator.evaluate_expression(eval_ctx, &us.price)? {
+                            DataValue::Money(d) => d,
+                            DataValue::Int(i) => Decimal::from(i),
+                            _ => return Err(EvaluationError::InvalidType),
+                        };
+                        LedgerEntryCommand::Credit {
+                            account_id: op.account.clone(),
+                            amount: units * price,
+                            units: Some(units),
+                        }
+                    } else {
+                        LedgerEntryCommand::Credit {
+                            account_id: op.account.clone(),
+                            amount: match &op.amount {
+                                Some(amount) => match self.expression_evaluator.evaluate_expression(eval_ctx, amount)? {
+                                    DataValue::Money(d) => d,
+                                    DataValue::Int(i) => Decimal::from(i),
+                                    DataValue::Percentage(p) => journal_amount * p,
+                                    _ => return Err(EvaluationError::InvalidType),
+                                },
+                                None => journal_amount,
                             },
-                            None => journal_amount,
+                            units: None,
                         }
                     }
                 }
@@ -460,6 +500,102 @@ impl StatementExecutor {
         }
 
         Ok(result)
+    }
+
+    fn sell(&self, context: &ExecutionContext, sell: &SellCommand) -> Result<ExecutionResult, EvaluationError> {
+        let eval_ctx: ExpressionEvaluationContext = context.into();
+
+        let units = match self.expression_evaluator.evaluate_expression(&eval_ctx, &sell.units)? {
+            DataValue::Money(d) => d,
+            DataValue::Int(i) => Decimal::from(i),
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        let price = match self.expression_evaluator.evaluate_expression(&eval_ctx, &sell.price)? {
+            DataValue::Money(d) => d,
+            DataValue::Int(i) => Decimal::from(i),
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        let date = match self.expression_evaluator.evaluate_expression(&eval_ctx, &sell.date)? {
+            DataValue::Date(d) => d,
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        let description = match self.expression_evaluator.evaluate_expression(&eval_ctx, &sell.description)? {
+            DataValue::String(s) => s,
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        let proceeds = units * price;
+        let cost_basis = self.storage.deplete_lots(&context.entity_id, &sell.account, units, &sell.method)?;
+        let gain_or_loss = proceeds - cost_basis;
+
+        let mut entries = vec![
+            LedgerEntryCommand::Debit {
+                account_id: sell.proceeds_account.clone(),
+                amount: proceeds,
+                units: None,
+            },
+            LedgerEntryCommand::Credit {
+                account_id: sell.account.clone(),
+                amount: cost_basis,
+                units: None, // lots already depleted by sell
+            },
+        ];
+
+        if gain_or_loss > dec!(0) {
+            entries.push(LedgerEntryCommand::Credit {
+                account_id: sell.gain_loss_account.clone(),
+                amount: gain_or_loss,
+                units: None,
+            });
+        } else if gain_or_loss < dec!(0) {
+            entries.push(LedgerEntryCommand::Debit {
+                account_id: sell.gain_loss_account.clone(),
+                amount: gain_or_loss.abs(),
+                units: None,
+            });
+        }
+
+        let command = CreateJournalCommand {
+            date,
+            description,
+            amount: proceeds,
+            dimensions: BTreeMap::new(),
+            ledger_entries: entries,
+        };
+
+        self.storage.create_journal(&context.entity_id, &command)?;
+
+        let mut result = ExecutionResult::new();
+        result.journals_created += 1;
+        Ok(result)
+    }
+
+    fn split(&self, context: &ExecutionContext, split: &SplitCommand) -> Result<ExecutionResult, EvaluationError> {
+        let eval_ctx: ExpressionEvaluationContext = context.into();
+
+        let new_units = match self.expression_evaluator.evaluate_expression(&eval_ctx, &split.new_units)? {
+            DataValue::Money(d) => d,
+            DataValue::Int(i) => Decimal::from(i),
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        let old_units = match self.expression_evaluator.evaluate_expression(&eval_ctx, &split.old_units)? {
+            DataValue::Money(d) => d,
+            DataValue::Int(i) => Decimal::from(i),
+            _ => return Err(EvaluationError::InvalidType),
+        };
+
+        if old_units == dec!(0) {
+            return Err(EvaluationError::DivideByZero);
+        }
+
+        let ratio = new_units / old_units;
+        self.storage.split_lots(&context.entity_id, &split.account, ratio)?;
+
+        Ok(ExecutionResult::new())
     }
 }
 
