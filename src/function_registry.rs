@@ -40,4 +40,11 @@ impl FunctionRegistry {
     let lock = self.functions.read().unwrap();
     lock.get(name).cloned()
   }
+
+  pub fn list_functions(&self) -> Vec<String> {
+    let lock = self.functions.read().unwrap();
+    let mut names: Vec<String> = lock.keys().cloned().collect();
+    names.sort();
+    names
+  }
 }

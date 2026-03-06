@@ -680,6 +680,20 @@ impl StorageBackend for PostgresStorage {
             .collect()
     }
 
+    fn list_rates(&self, _entity_id: &str) -> Vec<Arc<str>> {
+        let mut client = self.client.lock().unwrap();
+        let rows = client
+            .query("SELECT DISTINCT id FROM rates ORDER BY id", &[])
+            .unwrap_or_default();
+
+        rows.iter()
+            .map(|row| {
+                let id: String = row.get(0);
+                Arc::from(id.as_str())
+            })
+            .collect()
+    }
+
     fn begin_transaction(&self) -> Result<TransactionId, StorageError> {
         let mut client = self.client.lock().unwrap();
         client

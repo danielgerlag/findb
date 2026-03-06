@@ -260,28 +260,21 @@ pub fn map_parse_error(error_str: &str) -> ApiErrorDto {
 }
 
 fn levenshtein(a: &str, b: &str) -> usize {
-    let a_len = a.len();
-    let b_len = b.len();
-    let mut matrix = vec![vec![0usize; b_len + 1]; a_len + 1];
-    for i in 0..=a_len {
-        matrix[i][0] = i;
-    }
-    for j in 0..=b_len {
-        matrix[0][j] = j;
-    }
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let a_len = a_bytes.len();
+    let b_len = b_bytes.len();
+    let mut prev = (0..=b_len).collect::<Vec<_>>();
+    let mut curr = vec![0; b_len + 1];
     for i in 1..=a_len {
+        curr[0] = i;
         for j in 1..=b_len {
-            let cost = if a.as_bytes()[i - 1] == b.as_bytes()[j - 1] {
-                0
-            } else {
-                1
-            };
-            matrix[i][j] = (matrix[i - 1][j] + 1)
-                .min(matrix[i][j - 1] + 1)
-                .min(matrix[i - 1][j - 1] + cost);
+            let cost = if a_bytes[i - 1] == b_bytes[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
+        std::mem::swap(&mut prev, &mut curr);
     }
-    matrix[a_len][b_len]
+    prev[b_len]
 }
 
 fn find_closest_match(input: &str, candidates: &[&str]) -> Option<String> {

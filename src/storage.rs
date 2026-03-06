@@ -237,6 +237,14 @@ impl StorageBackend for InMemoryStorage {
         }
     }
 
+    fn list_rates(&self, entity_id: &str) -> Vec<Arc<str>> {
+        let entities = self.entities.read().unwrap();
+        match entities.get(entity_id) {
+            Some(entity) => entity.rates.keys().cloned().collect(),
+            None => Vec::new(),
+        }
+    }
+
     fn begin_transaction(&self) -> Result<TransactionId, StorageError> {
         let tx_id = self.tx_counter.fetch_add(1, Ordering::SeqCst);
         let snapshot = Snapshot {

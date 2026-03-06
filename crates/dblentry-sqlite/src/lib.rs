@@ -649,6 +649,21 @@ impl StorageBackend for SqliteStorage {
         result
     }
 
+    fn list_rates(&self, _entity_id: &str) -> Vec<Arc<str>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT id FROM rates ORDER BY id")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                Ok(id)
+            })
+            .unwrap();
+
+        rows.flatten().map(|id| Arc::from(id.as_str())).collect()
+    }
+
     fn begin_transaction(&self) -> Result<TransactionId, StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("SAVEPOINT dblentry_tx")

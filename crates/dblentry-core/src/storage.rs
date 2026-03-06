@@ -48,6 +48,7 @@ pub trait StorageBackend: Send + Sync {
     fn get_statement(&self, entity_id: &str, account_id: &str, from: Bound<Date>, to: Bound<Date>, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<DataValue, StorageError>;
     fn get_dimension_values(&self, entity_id: &str, account_id: &str, dimension_key: Arc<str>, from: Date, to: Date) -> Result<HashSet<Arc<DataValue>>, StorageError>;
     fn list_accounts(&self, entity_id: &str) -> Vec<(Arc<str>, AccountType)>;
+    fn list_rates(&self, entity_id: &str) -> Vec<Arc<str>>;
 
     fn begin_transaction(&self) -> Result<TransactionId, StorageError>;
     fn commit_transaction(&self, tx_id: TransactionId) -> Result<(), StorageError>;
