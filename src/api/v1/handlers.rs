@@ -4,13 +4,14 @@ use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
 use metrics::{counter, histogram};
 
 use crate::{
     api::{TextFqlResponse, TextFqlMetadata},
     evaluator::QueryVariables,
+    idempotency::IdempotencyStore,
     lexer,
     statement_executor::{ExecutionContext, StatementExecutor},
 };
@@ -29,11 +30,31 @@ fn wants_json(headers: &HeaderMap) -> bool {
 
 pub async fn fql_handler_v1(
     State(exec): State<Arc<StatementExecutor>>,
+    Extension(idempotency): Extension<Arc<IdempotencyStore>>,
     headers: HeaderMap,
     query: String,
 ) -> impl IntoResponse {
     counter!("fql_requests_total", 1);
     let start = std::time::Instant::now();
+
+    let idempotency_key = headers
+        .get("Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if let Some(ref key) = idempotency_key {
+        if let Some((cached_value, _cached_status)) = idempotency.get(key) {
+            let mut response = (
+                StatusCode::from_u16(208).unwrap_or(StatusCode::OK),
+                Json(cached_value),
+            )
+                .into_response();
+            response
+                .headers_mut()
+                .insert("Idempotency-Key", key.parse().unwrap());
+            return response;
+        }
+    }
 
     let statements = match lexer::parse(&query) {
         Ok(s) => s,
@@ -44,8 +65,18 @@ pub async fn fql_handler_v1(
             histogram!("fql_request_duration_seconds", duration.as_secs_f64());
 
             if wants_json(&headers) {
-                let resp = mappers::error_response(format!("Parse error: {}", e));
-                return (StatusCode::BAD_REQUEST, Json(serde_json::to_value(resp).unwrap())).into_response();
+                let resp = mappers::error_response(mappers::map_parse_error(&format!("{}", e)));
+                let json_value = serde_json::to_value(&resp).unwrap();
+                if let Some(ref key) = idempotency_key {
+                    idempotency.set(key.clone(), json_value.clone(), 400);
+                }
+                let mut response = (StatusCode::BAD_REQUEST, Json(json_value)).into_response();
+                if let Some(ref key) = idempotency_key {
+                    response
+                        .headers_mut()
+                        .insert("Idempotency-Key", key.parse().unwrap());
+                }
+                return response;
             } else {
                 let resp = TextFqlResponse {
                     success: false,
@@ -79,9 +110,18 @@ pub async fn fql_handler_v1(
 
             if wants_json(&headers) {
                 let resp = mappers::map_execution_results(&script_results);
-                (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response()
+                let json_value = serde_json::to_value(&resp).unwrap();
+                if let Some(ref key) = idempotency_key {
+                    idempotency.set(key.clone(), json_value.clone(), 200);
+                }
+                let mut response = (StatusCode::OK, Json(json_value)).into_response();
+                if let Some(ref key) = idempotency_key {
+                    response
+                        .headers_mut()
+                        .insert("Idempotency-Key", key.parse().unwrap());
+                }
+                response
             } else {
-                // Text format — existing behavior
                 let mut results = Vec::new();
                 for result in &script_results {
                     let result_str = result.to_string();
@@ -108,8 +148,18 @@ pub async fn fql_handler_v1(
             histogram!("fql_request_duration_seconds", duration.as_secs_f64());
 
             if wants_json(&headers) {
-                let resp = mappers::error_response(format!("{}", e));
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::to_value(resp).unwrap())).into_response()
+                let resp = mappers::error_response(mappers::map_evaluation_error(&e));
+                let json_value = serde_json::to_value(&resp).unwrap();
+                if let Some(ref key) = idempotency_key {
+                    idempotency.set(key.clone(), json_value.clone(), 500);
+                }
+                let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(json_value)).into_response();
+                if let Some(ref key) = idempotency_key {
+                    response
+                        .headers_mut()
+                        .insert("Idempotency-Key", key.parse().unwrap());
+                }
+                response
             } else {
                 let resp = TextFqlResponse {
                     success: false,

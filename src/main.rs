@@ -10,6 +10,7 @@ use dblentry::api::v1::handlers::fql_handler_v1;
 use dblentry::api::v1::schema::{SchemaState, schema_overview, schema_entity};
 use dblentry::api::v1::handlers::batch_fql_handler;
 use dblentry::api::v1::spec::fql_spec_handler;
+use dblentry::idempotency::IdempotencyStore;
 use dblentry::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max, Units, MarketValue, UnrealizedGain, CostBasis, Lots}, lexer};
 use dblentry_sqlite::SqliteStorage;
 use dblentry_postgres::PostgresStorage;
@@ -91,6 +92,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let auth_config = Arc::new(config.auth.clone());
 
+    let idempotency_store = Arc::new(IdempotencyStore::new(86400));
+    let idem_clone = idempotency_store.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            idem_clone.cleanup_expired();
+        }
+    });
+
     // Protected routes (auth middleware applied)
     let protected = Router::new()
         .route("/fql", post(fql_handler))
@@ -126,6 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state.clone())
         .layer(middleware::from_fn(auth_middleware))
         .layer(Extension(auth_config))
+        .layer(Extension(idempotency_store))
         .layer(Extension(SchemaState {
             storage: storage.clone(),
             function_registry: function_registry.clone(),

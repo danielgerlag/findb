@@ -1,12 +1,30 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
+pub struct ApiErrorDto {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<ApiErrorDetails>,
+}
+
+#[derive(Serialize)]
+pub struct ApiErrorDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+}
+
+#[derive(Serialize)]
 pub struct FqlResponseV1 {
     pub success: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub results: Vec<ResultEntryDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<ApiErrorDto>,
     pub metadata: FqlMetadataDto,
 }
 
