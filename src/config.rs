@@ -17,6 +17,10 @@ pub struct CliArgs {
     /// Log level (overrides config file)
     #[arg(short, long)]
     pub log_level: Option<String>,
+
+    /// Run as MCP server over stdio (for AI agent integration)
+    #[arg(long)]
+    pub mcp: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]

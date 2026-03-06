@@ -26,6 +26,33 @@ struct CreateEntityRestRequest {
 
 use dblentry::api::{TextFqlResponse, TextFqlMetadata};
 
+struct DblEntryFqlEngine {
+    executor: Arc<StatementExecutor>,
+}
+
+impl dblentry_mcp::FqlEngine for DblEntryFqlEngine {
+    fn execute_fql(&self, fql: &str, entity: Option<&str>) -> Result<Vec<dblentry_mcp::FqlResult>, String> {
+        let statements = lexer::parse(fql).map_err(|e| format!("Parse error: {}", e))?;
+        let eff_date = time::OffsetDateTime::now_utc().date();
+        let mut context = ExecutionContext::new(eff_date, QueryVariables::new());
+        if let Some(entity) = entity {
+            context.entity_id = Arc::from(entity);
+        }
+        self.executor
+            .execute_script(&mut context, &statements)
+            .map(|results| {
+                results
+                    .iter()
+                    .map(|r| dblentry_mcp::FqlResult {
+                        output: r.to_string(),
+                        journals_created: r.journals_created,
+                    })
+                    .collect()
+            })
+            .map_err(|e| format!("{}", e))
+    }
+}
+
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -90,6 +117,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(exec);
     let app_storage = storage.clone();
     
+    if cli.mcp {
+        tracing::info!("Starting DblEntry MCP server over stdio");
+        let engine = Arc::new(DblEntryFqlEngine { executor: state.clone() });
+        dblentry_mcp::run_mcp_stdio(engine, storage.clone()).await?;
+        return Ok(());
+    }
+
     let auth_config = Arc::new(config.auth.clone());
 
     let idempotency_store = Arc::new(IdempotencyStore::new(86400));
