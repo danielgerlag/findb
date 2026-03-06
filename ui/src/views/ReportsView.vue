@@ -18,7 +18,7 @@
     </div>
 
     <TabView v-model:activeIndex="activeTab">
-      <TabPanel header="Balance Sheet">
+      <TabPanel header="Balance Sheet" value="0">
         <div class="report-card card">
           <div v-if="loading" class="report-loading">Loading report data…</div>
           <div v-else-if="error" class="error-msg">{{ error }}</div>
@@ -99,7 +99,7 @@
         </div>
       </TabPanel>
 
-      <TabPanel header="Income Statement">
+      <TabPanel header="Income Statement" value="1">
         <div class="report-card card">
           <div v-if="loading" class="report-loading">Loading report data…</div>
           <div v-else-if="error" class="error-msg">{{ error }}</div>
