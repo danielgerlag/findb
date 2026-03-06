@@ -46,25 +46,39 @@ impl PostgresStorage {
         client
             .batch_execute(
                 "
+            CREATE TABLE IF NOT EXISTS entities (
+                id TEXT PRIMARY KEY
+            );
+
+            INSERT INTO entities (id) VALUES ('default')
+                ON CONFLICT (id) DO NOTHING;
+
             CREATE TABLE IF NOT EXISTS accounts (
-                id TEXT PRIMARY KEY,
-                account_type TEXT NOT NULL
+                id TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                unit_rate_id TEXT,
+                entity_id TEXT NOT NULL DEFAULT 'default',
+                PRIMARY KEY (entity_id, id)
             );
 
             CREATE TABLE IF NOT EXISTS rates (
                 id TEXT NOT NULL,
                 date TEXT NOT NULL,
                 value TEXT NOT NULL,
-                PRIMARY KEY (id, date)
+                entity_id TEXT NOT NULL DEFAULT 'default',
+                PRIMARY KEY (entity_id, id, date)
             );
 
             CREATE TABLE IF NOT EXISTS journals (
-                id TEXT PRIMARY KEY,
+                id TEXT NOT NULL,
                 sequence BIGINT NOT NULL,
                 date TEXT NOT NULL,
                 description TEXT NOT NULL,
                 amount TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                entity_id TEXT NOT NULL DEFAULT 'default',
+                PRIMARY KEY (entity_id, id),
+                UNIQUE (id)
             );
 
             CREATE TABLE IF NOT EXISTS journal_dimensions (
@@ -76,9 +90,10 @@ impl PostgresStorage {
             CREATE TABLE IF NOT EXISTS ledger_entries (
                 id BIGSERIAL PRIMARY KEY,
                 journal_id TEXT NOT NULL REFERENCES journals(id),
-                account_id TEXT NOT NULL REFERENCES accounts(id),
+                account_id TEXT NOT NULL,
                 date TEXT NOT NULL,
-                amount TEXT NOT NULL
+                amount TEXT NOT NULL,
+                entity_id TEXT NOT NULL DEFAULT 'default'
             );
 
             CREATE TABLE IF NOT EXISTS ledger_entry_dimensions (
@@ -88,13 +103,13 @@ impl PostgresStorage {
             );
 
             CREATE INDEX IF NOT EXISTS idx_pg_ledger_account_date
-                ON ledger_entries(account_id, date);
+                ON ledger_entries(entity_id, account_id, date);
 
             CREATE INDEX IF NOT EXISTS idx_pg_ledger_dim
                 ON ledger_entry_dimensions(ledger_entry_id);
 
             CREATE INDEX IF NOT EXISTS idx_pg_rates_lookup
-                ON rates(id, date);
+                ON rates(entity_id, id, date);
 
             CREATE TABLE IF NOT EXISTS sequence_counter (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -107,20 +122,14 @@ impl PostgresStorage {
             -- Enable ltree extension (for hierarchical dimensions)
             CREATE EXTENSION IF NOT EXISTS ltree;
 
-            -- Safe add column - ignore if exists
-            DO $$ BEGIN
-                ALTER TABLE accounts ADD COLUMN unit_rate_id TEXT;
-            EXCEPTION WHEN duplicate_column THEN NULL;
-            END $$;
-
-            -- Lots table
             CREATE TABLE IF NOT EXISTS lots (
                 id BIGSERIAL PRIMARY KEY,
-                account_id TEXT NOT NULL REFERENCES accounts(id),
+                account_id TEXT NOT NULL,
                 date TEXT NOT NULL,
                 units_remaining TEXT NOT NULL,
                 cost_per_unit TEXT NOT NULL,
-                journal_id TEXT NOT NULL
+                journal_id TEXT NOT NULL,
+                entity_id TEXT NOT NULL DEFAULT 'default'
             );
 
             CREATE TABLE IF NOT EXISTS lot_dimensions (
@@ -129,7 +138,7 @@ impl PostgresStorage {
                 dimension_value TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_pg_lot_account ON lots(account_id);
+            CREATE INDEX IF NOT EXISTS idx_pg_lot_account ON lots(entity_id, account_id);
             CREATE INDEX IF NOT EXISTS idx_pg_lot_dims ON lot_dimensions(lot_id, dimension_key, dimension_value);
             ",
             )
@@ -197,56 +206,80 @@ fn data_value_to_str(dv: &DataValue) -> String {
 }
 
 impl StorageBackend for PostgresStorage {
-    fn create_entity(&self, _entity_id: &str) -> Result<(), StorageError> {
-        // TODO: Add entities table and full entity support
+    fn create_entity(&self, entity_id: &str) -> Result<(), StorageError> {
+        let mut client = self.client.lock().unwrap();
+        client
+            .execute(
+                "INSERT INTO entities (id) VALUES ($1) ON CONFLICT (id) DO NOTHING",
+                &[&entity_id],
+            )
+            .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(())
     }
 
     fn list_entities(&self) -> Vec<Arc<str>> {
-        vec![Arc::from("default")]
+        let mut client = self.client.lock().unwrap();
+        let rows = client
+            .query("SELECT id FROM entities ORDER BY id", &[])
+            .unwrap_or_default();
+        rows.iter()
+            .map(|row| {
+                let id: String = row.get(0);
+                Arc::from(id.as_str())
+            })
+            .collect()
     }
 
-    fn entity_exists(&self, _entity_id: &str) -> bool {
-        true // Postgres currently only supports default entity
+    fn entity_exists(&self, entity_id: &str) -> bool {
+        let mut client = self.client.lock().unwrap();
+        let result = client.query_one(
+            "SELECT COUNT(*) > 0 FROM entities WHERE id = $1",
+            &[&entity_id],
+        );
+        match result {
+            Ok(row) => row.get(0),
+            Err(_) => false,
+        }
     }
 
-    fn create_account(&self, _entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
+    fn create_account(&self, entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         let unit_rate_id_opt = account.unit_rate_id.as_ref().map(|r| r.as_ref());
         client
             .execute(
-                "INSERT INTO accounts (id, account_type, unit_rate_id) VALUES ($1, $2, $3)
-                 ON CONFLICT (id) DO UPDATE SET account_type = $2, unit_rate_id = $3",
-                &[&account.id.as_ref(), &account_type_to_str(&account.account_type), &unit_rate_id_opt],
+                "INSERT INTO accounts (id, account_type, unit_rate_id, entity_id) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (entity_id, id) DO UPDATE SET account_type = $2, unit_rate_id = $3",
+                &[&account.id.as_ref(), &account_type_to_str(&account.account_type), &unit_rate_id_opt, &entity_id],
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(())
     }
 
     fn create_rate(&self, _entity_id: &str, _rate: &CreateRateCommand) -> Result<(), StorageError> {
+        // Rate creation is a no-op; rates are stored via set_rate
         Ok(())
     }
 
-    fn set_rate(&self, _entity_id: &str, command: &SetRateCommand) -> Result<(), StorageError> {
+    fn set_rate(&self, entity_id: &str, command: &SetRateCommand) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         let date_str = date_to_str(command.date);
         let val_str = command.rate.to_string();
         client
             .execute(
-                "INSERT INTO rates (id, date, value) VALUES ($1, $2, $3)
-                 ON CONFLICT (id, date) DO UPDATE SET value = $3",
-                &[&command.id.as_ref(), &date_str, &val_str],
+                "INSERT INTO rates (id, date, value, entity_id) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (entity_id, id, date) DO UPDATE SET value = $3",
+                &[&command.id.as_ref(), &date_str, &val_str, &entity_id],
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(())
     }
 
-    fn get_rate(&self, _entity_id: &str, id: &str, date: Date) -> Result<Decimal, StorageError> {
+    fn get_rate(&self, entity_id: &str, id: &str, date: Date) -> Result<Decimal, StorageError> {
         let mut client = self.client.lock().unwrap();
         let date_str = date_to_str(date);
         let result = client.query_opt(
-            "SELECT value FROM rates WHERE id = $1 AND date <= $2 ORDER BY date DESC LIMIT 1",
-            &[&id, &date_str],
+            "SELECT value FROM rates WHERE entity_id = $1 AND id = $2 AND date <= $3 ORDER BY date DESC LIMIT 1",
+            &[&entity_id, &id, &date_str],
         );
         match result {
             Ok(Some(row)) => {
@@ -259,7 +292,7 @@ impl StorageBackend for PostgresStorage {
         }
     }
 
-    fn create_journal(&self, _entity_id: &str, command: &CreateJournalCommand) -> Result<(), StorageError> {
+    fn create_journal(&self, entity_id: &str, command: &CreateJournalCommand) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         let jid = Uuid::new_v4().to_string();
         let seq = Self::next_sequence(&mut client)?;
@@ -270,8 +303,8 @@ impl StorageBackend for PostgresStorage {
 
         client
             .execute(
-                "INSERT INTO journals (id, sequence, date, description, amount, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO journals (id, sequence, date, description, amount, created_at, entity_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 &[
                     &jid,
                     &seq_i64,
@@ -279,6 +312,7 @@ impl StorageBackend for PostgresStorage {
                     &command.description.as_ref(),
                     &amount_str,
                     &now,
+                    &entity_id,
                 ],
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -310,8 +344,8 @@ impl StorageBackend for PostgresStorage {
 
             let row = client
                 .query_opt(
-                    "SELECT account_type FROM accounts WHERE id = $1",
-                    &[&account_id.as_ref()],
+                    "SELECT account_type FROM accounts WHERE entity_id = $1 AND id = $2",
+                    &[&entity_id, &account_id.as_ref()],
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?
                 .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
@@ -326,9 +360,9 @@ impl StorageBackend for PostgresStorage {
             let amount_str = signed_amount.to_string();
             let le_row = client
                 .query_one(
-                    "INSERT INTO ledger_entries (journal_id, account_id, date, amount)
-                     VALUES ($1, $2, $3, $4) RETURNING id",
-                    &[&jid, &account_id.as_ref(), &date_str, &amount_str],
+                    "INSERT INTO ledger_entries (journal_id, account_id, date, amount, entity_id)
+                     VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                    &[&jid, &account_id.as_ref(), &date_str, &amount_str, &entity_id],
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?;
 
@@ -349,8 +383,8 @@ impl StorageBackend for PostgresStorage {
             if let LedgerEntryCommand::Debit { account_id, amount, units: Some(unit_count) } = entry {
                 let unit_rate_row = client
                     .query_opt(
-                        "SELECT unit_rate_id FROM accounts WHERE id = $1",
-                        &[&account_id.as_ref()],
+                        "SELECT unit_rate_id FROM accounts WHERE entity_id = $1 AND id = $2",
+                        &[&entity_id, &account_id.as_ref()],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
 
@@ -366,9 +400,9 @@ impl StorageBackend for PostgresStorage {
                     let cpu_str = cost_per_unit.to_string();
                     let lot_row = client
                         .query_one(
-                            "INSERT INTO lots (account_id, date, units_remaining, cost_per_unit, journal_id)
-                             VALUES ($1, $2, $3, $4, $5) RETURNING id",
-                            &[&account_id.as_ref(), &date_str, &units_str, &cpu_str, &jid],
+                            "INSERT INTO lots (account_id, date, units_remaining, cost_per_unit, journal_id, entity_id)
+                             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                            &[&account_id.as_ref(), &date_str, &units_str, &cpu_str, &jid, &entity_id],
                         )
                         .map_err(|e| StorageError::Other(e.to_string()))?;
 
@@ -390,8 +424,8 @@ impl StorageBackend for PostgresStorage {
             if let LedgerEntryCommand::Credit { account_id, units: Some(unit_count), .. } = entry {
                 let unit_rate_row = client
                     .query_opt(
-                        "SELECT unit_rate_id FROM accounts WHERE id = $1",
-                        &[&account_id.as_ref()],
+                        "SELECT unit_rate_id FROM accounts WHERE entity_id = $1 AND id = $2",
+                        &[&entity_id, &account_id.as_ref()],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
 
@@ -402,9 +436,9 @@ impl StorageBackend for PostgresStorage {
                     let lot_rows = client
                         .query(
                             "SELECT id, units_remaining FROM lots
-                             WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                             WHERE entity_id = $1 AND account_id = $2 AND units_remaining::NUMERIC > 0
                              ORDER BY date ASC, id ASC",
-                            &[&account_id.as_ref()],
+                            &[&entity_id, &account_id.as_ref()],
                         )
                         .map_err(|e| StorageError::Other(e.to_string()))?;
 
@@ -444,7 +478,7 @@ impl StorageBackend for PostgresStorage {
 
     fn get_balance(
         &self,
-        _entity_id: &str,
+        entity_id: &str,
         account_id: &str,
         date: Date,
         dimension: Option<&(Arc<str>, Arc<DataValue>)>,
@@ -454,8 +488,8 @@ impl StorageBackend for PostgresStorage {
         // Verify account exists
         let exists = client
             .query_one(
-                "SELECT COUNT(*) > 0 FROM accounts WHERE id = $1",
-                &[&account_id],
+                "SELECT COUNT(*) > 0 FROM accounts WHERE entity_id = $1 AND id = $2",
+                &[&entity_id, &account_id],
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
         let acct_exists: bool = exists.get(0);
@@ -474,10 +508,10 @@ impl StorageBackend for PostgresStorage {
                         "SELECT COALESCE(SUM(le.amount::NUMERIC), 0)::TEXT
                          FROM ledger_entries le
                          JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-                         WHERE le.account_id = $1 AND le.date <= $2
-                           AND led.dimension_key = $3
-                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $5 || '/%' ESCAPE '\\')",
-                        &[&account_id, &date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
+                         WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date <= $3
+                           AND led.dimension_key = $4
+                           AND (led.dimension_value = $5 OR led.dimension_value LIKE $6 || '/%' ESCAPE '\\')",
+                        &[&entity_id, &account_id, &date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -487,8 +521,8 @@ impl StorageBackend for PostgresStorage {
                     .query_one(
                         "SELECT COALESCE(SUM(le.amount::NUMERIC), 0)::TEXT
                          FROM ledger_entries le
-                         WHERE le.account_id = $1 AND le.date <= $2",
-                        &[&account_id, &date_str],
+                         WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date <= $3",
+                        &[&entity_id, &account_id, &date_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -501,7 +535,7 @@ impl StorageBackend for PostgresStorage {
 
     fn get_statement(
         &self,
-        _entity_id: &str,
+        entity_id: &str,
         account_id: &str,
         from: Bound<Date>,
         to: Bound<Date>,
@@ -512,8 +546,8 @@ impl StorageBackend for PostgresStorage {
         // Verify account exists
         let exists = client
             .query_one(
-                "SELECT COUNT(*) > 0 FROM accounts WHERE id = $1",
-                &[&account_id],
+                "SELECT COUNT(*) > 0 FROM accounts WHERE entity_id = $1 AND id = $2",
+                &[&entity_id, &account_id],
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
         let acct_exists: bool = exists.get(0);
@@ -549,10 +583,10 @@ impl StorageBackend for PostgresStorage {
                         "SELECT COALESCE(SUM(le.amount::NUMERIC), 0)::TEXT
                          FROM ledger_entries le
                          JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-                         WHERE le.account_id = $1 AND le.date <= $2
-                           AND led.dimension_key = $3
-                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $5 || '/%' ESCAPE '\\')",
-                        &[&account_id, &balance_date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
+                         WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date <= $3
+                           AND led.dimension_key = $4
+                           AND (led.dimension_value = $5 OR led.dimension_value LIKE $6 || '/%' ESCAPE '\\')",
+                        &[&entity_id, &account_id, &balance_date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -562,8 +596,8 @@ impl StorageBackend for PostgresStorage {
                     .query_one(
                         "SELECT COALESCE(SUM(le.amount::NUMERIC), 0)::TEXT
                          FROM ledger_entries le
-                         WHERE le.account_id = $1 AND le.date <= $2",
-                        &[&account_id, &balance_date_str],
+                         WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date <= $3",
+                        &[&entity_id, &account_id, &balance_date_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -579,9 +613,9 @@ impl StorageBackend for PostgresStorage {
                  FROM ledger_entries le
                  JOIN journals j ON j.id = le.journal_id
                  JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-                 WHERE le.account_id = $1 AND le.date {} $2 AND le.date {} $3
-                   AND led.dimension_key = $4
-                   AND (led.dimension_value = $5 OR led.dimension_value LIKE $6 || '/%' ESCAPE '\\')
+                 WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date {} $3 AND le.date {} $4
+                   AND led.dimension_key = $5
+                   AND (led.dimension_value = $6 OR led.dimension_value LIKE $7 || '/%' ESCAPE '\\')
                  ORDER BY le.date, le.id",
                 from_op, to_op
             ),
@@ -589,7 +623,7 @@ impl StorageBackend for PostgresStorage {
                 "SELECT le.journal_id, le.date, j.description, le.amount
                  FROM ledger_entries le
                  JOIN journals j ON j.id = le.journal_id
-                 WHERE le.account_id = $1 AND le.date {} $2 AND le.date {} $3
+                 WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date {} $3 AND le.date {} $4
                  ORDER BY le.date, le.id",
                 from_op, to_op
             ),
@@ -602,12 +636,12 @@ impl StorageBackend for PostgresStorage {
                 client
                     .query(
                         &query,
-                        &[&account_id, &from_str, &to_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
+                        &[&entity_id, &account_id, &from_str, &to_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?
             }
             None => client
-                .query(&query, &[&account_id, &from_str, &to_str])
+                .query(&query, &[&entity_id, &account_id, &from_str, &to_str])
                 .map_err(|e| StorageError::Other(e.to_string()))?,
         };
 
@@ -637,7 +671,7 @@ impl StorageBackend for PostgresStorage {
 
     fn get_dimension_values(
         &self,
-        _entity_id: &str,
+        entity_id: &str,
         account_id: &str,
         dimension_key: Arc<str>,
         from: Date,
@@ -650,9 +684,10 @@ impl StorageBackend for PostgresStorage {
                 "SELECT DISTINCT led.dimension_value
                  FROM ledger_entries le
                  JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-                 WHERE le.account_id = $1 AND led.dimension_key = $2
-                   AND le.date >= $3 AND le.date <= $4",
+                 WHERE le.entity_id = $1 AND le.account_id = $2 AND led.dimension_key = $3
+                   AND le.date >= $4 AND le.date <= $5",
                 &[
+                    &entity_id,
                     &account_id,
                     &dimension_key.as_ref(),
                     &date_to_str(from),
@@ -669,10 +704,10 @@ impl StorageBackend for PostgresStorage {
         Ok(result)
     }
 
-    fn list_accounts(&self, _entity_id: &str) -> Vec<(Arc<str>, AccountType)> {
+    fn list_accounts(&self, entity_id: &str) -> Vec<(Arc<str>, AccountType)> {
         let mut client = self.client.lock().unwrap();
         let rows = client
-            .query("SELECT id, account_type FROM accounts ORDER BY id", &[])
+            .query("SELECT id, account_type FROM accounts WHERE entity_id = $1 ORDER BY id", &[&entity_id])
             .unwrap_or_default();
 
         rows.iter()
@@ -684,10 +719,10 @@ impl StorageBackend for PostgresStorage {
             .collect()
     }
 
-    fn list_rates(&self, _entity_id: &str) -> Vec<Arc<str>> {
+    fn list_rates(&self, entity_id: &str) -> Vec<Arc<str>> {
         let mut client = self.client.lock().unwrap();
         let rows = client
-            .query("SELECT DISTINCT id FROM rates ORDER BY id", &[])
+            .query("SELECT DISTINCT id FROM rates WHERE entity_id = $1 ORDER BY id", &[&entity_id])
             .unwrap_or_default();
 
         rows.iter()
@@ -737,7 +772,7 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
-    fn get_lots(&self, _entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
+    fn get_lots(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
         let mut client = self.client.lock().unwrap();
 
         let lot_rows: Vec<(i64, String, String, String)> = match dimension {
@@ -747,14 +782,14 @@ impl StorageBackend for PostgresStorage {
                 let rows = client
                     .query(
                         "SELECT l.id, l.date, l.units_remaining, l.cost_per_unit FROM lots l
-                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0
+                         WHERE l.entity_id = $1 AND l.account_id = $2 AND l.units_remaining::NUMERIC > 0
                            AND EXISTS (
                              SELECT 1 FROM lot_dimensions ld
-                             WHERE ld.lot_id = l.id AND ld.dimension_key = $2
-                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $4 || '/%' ESCAPE '\\')
+                             WHERE ld.lot_id = l.id AND ld.dimension_key = $3
+                               AND (ld.dimension_value = $4 OR ld.dimension_value LIKE $5 || '/%' ESCAPE '\\')
                            )
                          ORDER BY l.date ASC",
-                        &[&account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
+                        &[&entity_id, &account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 rows.iter()
@@ -765,9 +800,9 @@ impl StorageBackend for PostgresStorage {
                 let rows = client
                     .query(
                         "SELECT l.id, l.date, l.units_remaining, l.cost_per_unit FROM lots l
-                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0
+                         WHERE l.entity_id = $1 AND l.account_id = $2 AND l.units_remaining::NUMERIC > 0
                          ORDER BY l.date ASC",
-                        &[&account_id],
+                        &[&entity_id, &account_id],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 rows.iter()
@@ -809,7 +844,7 @@ impl StorageBackend for PostgresStorage {
         Ok(result)
     }
 
-    fn get_total_units(&self, _entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
+    fn get_total_units(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
         let mut client = self.client.lock().unwrap();
 
         let total_str: String = match dimension {
@@ -819,13 +854,13 @@ impl StorageBackend for PostgresStorage {
                 let row = client
                     .query_one(
                         "SELECT COALESCE(SUM(l.units_remaining::NUMERIC), 0)::TEXT FROM lots l
-                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0
+                         WHERE l.entity_id = $1 AND l.account_id = $2 AND l.units_remaining::NUMERIC > 0
                            AND EXISTS (
                              SELECT 1 FROM lot_dimensions ld
-                             WHERE ld.lot_id = l.id AND ld.dimension_key = $2
-                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $4 || '/%' ESCAPE '\\')
+                             WHERE ld.lot_id = l.id AND ld.dimension_key = $3
+                               AND (ld.dimension_value = $4 OR ld.dimension_value LIKE $5 || '/%' ESCAPE '\\')
                            )",
-                        &[&account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
+                        &[&entity_id, &account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -834,8 +869,8 @@ impl StorageBackend for PostgresStorage {
                 let row = client
                     .query_one(
                         "SELECT COALESCE(SUM(l.units_remaining::NUMERIC), 0)::TEXT FROM lots l
-                         WHERE l.account_id = $1 AND l.units_remaining::NUMERIC > 0",
-                        &[&account_id],
+                         WHERE l.entity_id = $1 AND l.account_id = $2 AND l.units_remaining::NUMERIC > 0",
+                        &[&entity_id, &account_id],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -846,7 +881,7 @@ impl StorageBackend for PostgresStorage {
             .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))
     }
 
-    fn deplete_lots(&self, _entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
+    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
         let mut client = self.client.lock().unwrap();
 
         let order = match method {
@@ -859,11 +894,11 @@ impl StorageBackend for PostgresStorage {
         let lot_rows: Vec<(i64, String, String)> = if dimensions.is_empty() {
             let query = format!(
                 "SELECT id, units_remaining, cost_per_unit FROM lots
-                 WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                 WHERE entity_id = $1 AND account_id = $2 AND units_remaining::NUMERIC > 0
                  ORDER BY date {order}, id {order}"
             );
             let rows = client
-                .query(&query, &[&account_id])
+                .query(&query, &[&entity_id, &account_id])
                 .map_err(|e| StorageError::Other(e.to_string()))?;
             rows.iter()
                 .map(|r| (r.get(0), r.get(1), r.get(2)))
@@ -871,9 +906,9 @@ impl StorageBackend for PostgresStorage {
         } else {
             // Build dimension filter: all dimension key/value pairs must match (prefix)
             let dim_conditions: Vec<String> = dimensions.iter().enumerate().map(|(i, _)| {
-                let p1 = 2 + i * 3;
-                let p2 = 3 + i * 3;
-                let p3 = 4 + i * 3;
+                let p1 = 3 + i * 3;
+                let p2 = 4 + i * 3;
+                let p3 = 5 + i * 3;
                 format!(
                     "EXISTS (SELECT 1 FROM lot_dimensions ld{i} WHERE ld{i}.lot_id = lots.id AND ld{i}.dimension_key = ${p1} AND (ld{i}.dimension_value = ${p2} OR ld{i}.dimension_value LIKE ${p3} || '/%' ESCAPE '\\'))"
                 )
@@ -881,14 +916,15 @@ impl StorageBackend for PostgresStorage {
 
             let query = format!(
                 "SELECT id, units_remaining, cost_per_unit FROM lots
-                 WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                 WHERE entity_id = $1 AND account_id = $2 AND units_remaining::NUMERIC > 0
                    AND {}
                  ORDER BY date {order}, id {order}",
                 dim_conditions.join(" AND ")
             );
 
-            // Build params: account_id + triples of (key, value, escaped_value)
+            // Build params: entity_id + account_id + triples of (key, value, escaped_value)
             let mut param_values: Vec<String> = Vec::new();
+            param_values.push(entity_id.to_string());
             param_values.push(account_id.to_string());
             for (k, v) in dimensions {
                 param_values.push(k.to_string());
@@ -996,7 +1032,7 @@ impl StorageBackend for PostgresStorage {
         }
     }
 
-    fn split_lots(&self, _entity_id: &str, account_id: &str, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
+    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         let ratio_str = new_per_old.to_string();
 
@@ -1007,15 +1043,15 @@ impl StorageBackend for PostgresStorage {
                 client
                     .execute(
                         "UPDATE lots SET
-                            units_remaining = (units_remaining::NUMERIC * $2::NUMERIC)::TEXT,
-                            cost_per_unit = (cost_per_unit::NUMERIC / $2::NUMERIC)::TEXT
-                         WHERE account_id = $1 AND units_remaining::NUMERIC > 0
+                            units_remaining = (units_remaining::NUMERIC * $3::NUMERIC)::TEXT,
+                            cost_per_unit = (cost_per_unit::NUMERIC / $3::NUMERIC)::TEXT
+                         WHERE entity_id = $1 AND account_id = $2 AND units_remaining::NUMERIC > 0
                            AND EXISTS (
                              SELECT 1 FROM lot_dimensions ld
-                             WHERE ld.lot_id = lots.id AND ld.dimension_key = $3
-                               AND (ld.dimension_value = $4 OR ld.dimension_value LIKE $5 || '/%' ESCAPE '\\')
+                             WHERE ld.lot_id = lots.id AND ld.dimension_key = $4
+                               AND (ld.dimension_value = $5 OR ld.dimension_value LIKE $6 || '/%' ESCAPE '\\')
                            )",
-                        &[&account_id, &ratio_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
+                        &[&entity_id, &account_id, &ratio_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
             }
@@ -1023,10 +1059,10 @@ impl StorageBackend for PostgresStorage {
                 client
                     .execute(
                         "UPDATE lots SET
-                            units_remaining = (units_remaining::NUMERIC * $2::NUMERIC)::TEXT,
-                            cost_per_unit = (cost_per_unit::NUMERIC / $2::NUMERIC)::TEXT
-                         WHERE account_id = $1 AND units_remaining::NUMERIC > 0",
-                        &[&account_id, &ratio_str],
+                            units_remaining = (units_remaining::NUMERIC * $3::NUMERIC)::TEXT,
+                            cost_per_unit = (cost_per_unit::NUMERIC / $3::NUMERIC)::TEXT
+                         WHERE entity_id = $1 AND account_id = $2 AND units_remaining::NUMERIC > 0",
+                        &[&entity_id, &account_id, &ratio_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
             }
@@ -1035,11 +1071,11 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
-    fn get_unit_rate_id(&self, _entity_id: &str, account_id: &str) -> Option<Arc<str>> {
+    fn get_unit_rate_id(&self, entity_id: &str, account_id: &str) -> Option<Arc<str>> {
         let mut client = self.client.lock().unwrap();
         let result = client.query_opt(
-            "SELECT unit_rate_id FROM accounts WHERE id = $1",
-            &[&account_id],
+            "SELECT unit_rate_id FROM accounts WHERE entity_id = $1 AND id = $2",
+            &[&entity_id, &account_id],
         );
         match result {
             Ok(Some(row)) => {
@@ -1050,11 +1086,11 @@ impl StorageBackend for PostgresStorage {
         }
     }
 
-    fn is_unit_account(&self, _entity_id: &str, account_id: &str) -> bool {
+    fn is_unit_account(&self, entity_id: &str, account_id: &str) -> bool {
         let mut client = self.client.lock().unwrap();
         let result = client.query_opt(
-            "SELECT unit_rate_id IS NOT NULL FROM accounts WHERE id = $1",
-            &[&account_id],
+            "SELECT unit_rate_id IS NOT NULL FROM accounts WHERE entity_id = $1 AND id = $2",
+            &[&entity_id, &account_id],
         );
         match result {
             Ok(Some(row)) => row.get::<_, bool>(0),

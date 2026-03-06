@@ -52,16 +52,26 @@ impl SqliteStorage {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
             "
+            CREATE TABLE IF NOT EXISTS entities (
+                id TEXT PRIMARY KEY
+            );
+
+            INSERT OR IGNORE INTO entities (id) VALUES ('default');
+
             CREATE TABLE IF NOT EXISTS accounts (
-                id TEXT PRIMARY KEY,
-                account_type TEXT NOT NULL
+                id TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                unit_rate_id TEXT,
+                entity_id TEXT NOT NULL DEFAULT 'default',
+                PRIMARY KEY (entity_id, id)
             );
 
             CREATE TABLE IF NOT EXISTS rates (
                 id TEXT NOT NULL,
                 date TEXT NOT NULL,
                 value TEXT NOT NULL,
-                PRIMARY KEY (id, date)
+                entity_id TEXT NOT NULL DEFAULT 'default',
+                PRIMARY KEY (entity_id, id, date)
             );
 
             CREATE TABLE IF NOT EXISTS journals (
@@ -70,7 +80,8 @@ impl SqliteStorage {
                 date TEXT NOT NULL,
                 description TEXT NOT NULL,
                 amount TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                entity_id TEXT NOT NULL DEFAULT 'default'
             );
 
             CREATE TABLE IF NOT EXISTS journal_dimensions (
@@ -86,8 +97,9 @@ impl SqliteStorage {
                 account_id TEXT NOT NULL,
                 date TEXT NOT NULL,
                 amount TEXT NOT NULL,
+                entity_id TEXT NOT NULL DEFAULT 'default',
                 FOREIGN KEY (journal_id) REFERENCES journals(id),
-                FOREIGN KEY (account_id) REFERENCES accounts(id)
+                FOREIGN KEY (entity_id, account_id) REFERENCES accounts(entity_id, id)
             );
 
             CREATE TABLE IF NOT EXISTS ledger_entry_dimensions (
@@ -98,13 +110,13 @@ impl SqliteStorage {
             );
 
             CREATE INDEX IF NOT EXISTS idx_ledger_account_date
-                ON ledger_entries(account_id, date);
+                ON ledger_entries(entity_id, account_id, date);
 
             CREATE INDEX IF NOT EXISTS idx_ledger_dim
                 ON ledger_entry_dimensions(ledger_entry_id);
 
             CREATE INDEX IF NOT EXISTS idx_rates_lookup
-                ON rates(id, date);
+                ON rates(entity_id, id, date);
 
             CREATE TABLE IF NOT EXISTS sequence_counter (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -120,7 +132,8 @@ impl SqliteStorage {
                 units_remaining TEXT NOT NULL,
                 cost_per_unit TEXT NOT NULL,
                 journal_id TEXT NOT NULL,
-                FOREIGN KEY (account_id) REFERENCES accounts(id)
+                entity_id TEXT NOT NULL DEFAULT 'default',
+                FOREIGN KEY (entity_id, account_id) REFERENCES accounts(entity_id, id)
             );
 
             CREATE TABLE IF NOT EXISTS lot_dimensions (
@@ -130,14 +143,11 @@ impl SqliteStorage {
                 FOREIGN KEY (lot_id) REFERENCES lots(id)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_lot_account ON lots(account_id);
+            CREATE INDEX IF NOT EXISTS idx_lot_account ON lots(entity_id, account_id);
             CREATE INDEX IF NOT EXISTS idx_lot_dims ON lot_dimensions(lot_id, dimension_key, dimension_value);
             ",
         )
         .map_err(|e| StorageError::Other(e.to_string()))?;
-
-        // Safely add unit_rate_id column (ignore error if it already exists)
-        let _ = conn.execute_batch("ALTER TABLE accounts ADD COLUMN unit_rate_id TEXT;");
 
         Ok(())
     }
@@ -202,56 +212,77 @@ fn data_value_to_str(dv: &DataValue) -> String {
 }
 
 impl StorageBackend for SqliteStorage {
-    fn create_entity(&self, _entity_id: &str) -> Result<(), StorageError> {
-        // TODO: Add entities table and full entity support
+    fn create_entity(&self, entity_id: &str) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO entities (id) VALUES (?1)",
+            params![entity_id],
+        )
+        .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(())
     }
 
     fn list_entities(&self) -> Vec<Arc<str>> {
-        vec![Arc::from("default")]
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id FROM entities ORDER BY id")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                Ok(id)
+            })
+            .unwrap();
+        rows.flatten().map(|id| Arc::from(id.as_str())).collect()
     }
 
-    fn entity_exists(&self, _entity_id: &str) -> bool {
-        true // SQLite currently only supports default entity
+    fn entity_exists(&self, entity_id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM entities WHERE id = ?1",
+                params![entity_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        count > 0
     }
 
-    fn create_account(&self, _entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
+    fn create_account(&self, entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         let unit_rate_id = account.unit_rate_id.as_ref().map(|s| s.to_string());
         conn.execute(
-            "INSERT OR REPLACE INTO accounts (id, account_type, unit_rate_id) VALUES (?1, ?2, ?3)",
-            params![account.id.as_ref(), account_type_to_str(&account.account_type), unit_rate_id],
+            "INSERT OR REPLACE INTO accounts (id, account_type, unit_rate_id, entity_id) VALUES (?1, ?2, ?3, ?4)",
+            params![account.id.as_ref(), account_type_to_str(&account.account_type), unit_rate_id, entity_id],
         )
         .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(())
     }
 
     fn create_rate(&self, _entity_id: &str, _rate: &CreateRateCommand) -> Result<(), StorageError> {
-        // Rates table uses (id, date) as PK; creating a rate just means it's available
-        // No row needed until set_rate is called — but we validate existence on get_rate
-        // Insert a marker if needed (not strictly necessary with our schema)
         Ok(())
     }
 
-    fn set_rate(&self, _entity_id: &str, command: &SetRateCommand) -> Result<(), StorageError> {
+    fn set_rate(&self, entity_id: &str, command: &SetRateCommand) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO rates (id, date, value) VALUES (?1, ?2, ?3)",
+            "INSERT OR REPLACE INTO rates (id, date, value, entity_id) VALUES (?1, ?2, ?3, ?4)",
             params![
                 command.id.as_ref(),
                 date_to_str(command.date),
-                command.rate.to_string()
+                command.rate.to_string(),
+                entity_id
             ],
         )
         .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(())
     }
 
-    fn get_rate(&self, _entity_id: &str, id: &str, date: Date) -> Result<Decimal, StorageError> {
+    fn get_rate(&self, entity_id: &str, id: &str, date: Date) -> Result<Decimal, StorageError> {
         let conn = self.conn.lock().unwrap();
         let result: Result<String, _> = conn.query_row(
-            "SELECT value FROM rates WHERE id = ?1 AND date <= ?2 ORDER BY date DESC LIMIT 1",
-            params![id, date_to_str(date)],
+            "SELECT value FROM rates WHERE entity_id = ?1 AND id = ?2 AND date <= ?3 ORDER BY date DESC LIMIT 1",
+            params![entity_id, id, date_to_str(date)],
             |row| row.get(0),
         );
         match result {
@@ -262,7 +293,7 @@ impl StorageBackend for SqliteStorage {
         }
     }
 
-    fn create_journal(&self, _entity_id: &str, command: &CreateJournalCommand) -> Result<(), StorageError> {
+    fn create_journal(&self, entity_id: &str, command: &CreateJournalCommand) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         let jid = Uuid::new_v4().to_string();
         let seq = Self::next_sequence(&conn)?;
@@ -270,8 +301,8 @@ impl StorageBackend for SqliteStorage {
         let now = OffsetDateTime::now_utc().to_string();
 
         conn.execute(
-            "INSERT INTO journals (id, sequence, date, description, amount, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![jid, seq, date_str, command.description.as_ref(), command.amount.to_string(), now],
+            "INSERT INTO journals (id, sequence, date, description, amount, created_at, entity_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![jid, seq, date_str, command.description.as_ref(), command.amount.to_string(), now, entity_id],
         ).map_err(|e| StorageError::Other(e.to_string()))?;
 
         // Insert journal dimensions
@@ -292,8 +323,8 @@ impl StorageBackend for SqliteStorage {
             // Get account type for sign convention
             let acct_type_str: String = conn
                 .query_row(
-                    "SELECT account_type FROM accounts WHERE id = ?1",
-                    params![account_id.as_ref()],
+                    "SELECT account_type FROM accounts WHERE entity_id = ?1 AND id = ?2",
+                    params![entity_id, account_id.as_ref()],
                     |row| row.get(0),
                 )
                 .map_err(|e| match e {
@@ -310,8 +341,8 @@ impl StorageBackend for SqliteStorage {
             };
 
             conn.execute(
-                "INSERT INTO ledger_entries (journal_id, account_id, date, amount) VALUES (?1, ?2, ?3, ?4)",
-                params![jid, account_id.as_ref(), date_str, signed_amount.to_string()],
+                "INSERT INTO ledger_entries (journal_id, account_id, date, amount, entity_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![jid, account_id.as_ref(), date_str, signed_amount.to_string(), entity_id],
             ).map_err(|e| StorageError::Other(e.to_string()))?;
 
             let le_id = conn.last_insert_rowid();
@@ -327,8 +358,8 @@ impl StorageBackend for SqliteStorage {
             // Handle lot creation for debits with units
             if let LedgerEntryCommand::Debit { account_id, amount, units: Some(unit_count) } = entry {
                 let unit_rate_id: Option<String> = conn.query_row(
-                    "SELECT unit_rate_id FROM accounts WHERE id = ?1",
-                    params![account_id.as_ref()],
+                    "SELECT unit_rate_id FROM accounts WHERE entity_id = ?1 AND id = ?2",
+                    params![entity_id, account_id.as_ref()],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
 
@@ -339,8 +370,8 @@ impl StorageBackend for SqliteStorage {
                         Decimal::ZERO
                     };
                     conn.execute(
-                        "INSERT INTO lots (account_id, date, units_remaining, cost_per_unit, journal_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-                        params![account_id.as_ref(), date_str, unit_count.to_string(), cost_per_unit.to_string(), jid],
+                        "INSERT INTO lots (account_id, date, units_remaining, cost_per_unit, journal_id, entity_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![account_id.as_ref(), date_str, unit_count.to_string(), cost_per_unit.to_string(), jid, entity_id],
                     ).map_err(|e| StorageError::Other(e.to_string()))?;
 
                     let lot_id = conn.last_insert_rowid();
@@ -356,8 +387,8 @@ impl StorageBackend for SqliteStorage {
             // Handle lot depletion for credits with units (FIFO)
             if let LedgerEntryCommand::Credit { account_id, units: Some(unit_count), .. } = entry {
                 let unit_rate_id: Option<String> = conn.query_row(
-                    "SELECT unit_rate_id FROM accounts WHERE id = ?1",
-                    params![account_id.as_ref()],
+                    "SELECT unit_rate_id FROM accounts WHERE entity_id = ?1 AND id = ?2",
+                    params![entity_id, account_id.as_ref()],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
 
@@ -366,10 +397,10 @@ impl StorageBackend for SqliteStorage {
                     let mut lot_rows: Vec<(i64, String)> = Vec::new();
                     {
                         let mut stmt = conn.prepare(
-                            "SELECT id, units_remaining FROM lots WHERE account_id = ?1 AND CAST(units_remaining AS REAL) > 0 ORDER BY date ASC"
+                            "SELECT id, units_remaining FROM lots WHERE entity_id = ?1 AND account_id = ?2 AND CAST(units_remaining AS REAL) > 0 ORDER BY date ASC"
                         ).map_err(|e| StorageError::Other(e.to_string()))?;
                         let rows = stmt.query_map(
-                            params![account_id.as_ref()],
+                            params![entity_id, account_id.as_ref()],
                             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
                         ).map_err(|e| StorageError::Other(e.to_string()))?;
                         for row in rows {
@@ -407,7 +438,7 @@ impl StorageBackend for SqliteStorage {
 
     fn get_balance(
         &self,
-        _entity_id: &str,
+        entity_id: &str,
         account_id: &str,
         date: Date,
         dimension: Option<&(Arc<str>, Arc<DataValue>)>,
@@ -417,8 +448,8 @@ impl StorageBackend for SqliteStorage {
         // Verify account exists
         let exists: bool = conn
             .query_row(
-                "SELECT COUNT(*) > 0 FROM accounts WHERE id = ?1",
-                params![account_id],
+                "SELECT COUNT(*) > 0 FROM accounts WHERE entity_id = ?1 AND id = ?2",
+                params![entity_id, account_id],
                 |row| row.get(0),
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -435,11 +466,11 @@ impl StorageBackend for SqliteStorage {
                     "SELECT CAST(COALESCE(SUM(le.amount), 0) AS TEXT)
                      FROM ledger_entries le
                      JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-                     WHERE le.account_id = ?1 AND le.date <= ?2
-                       AND led.dimension_key = ?3 AND (led.dimension_value = ?4 OR led.dimension_value LIKE ?5 || '/%' ESCAPE '\\')"
+                     WHERE le.entity_id = ?1 AND le.account_id = ?2 AND le.date <= ?3
+                       AND led.dimension_key = ?4 AND (led.dimension_value = ?5 OR led.dimension_value LIKE ?6 || '/%' ESCAPE '\\')"
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 let val: String = stmt.query_row(
-                    params![account_id, date_str, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
+                    params![entity_id, account_id, date_str, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 Decimal::from_str(&val).unwrap_or(Decimal::ZERO)
@@ -448,10 +479,10 @@ impl StorageBackend for SqliteStorage {
                 let mut stmt = conn.prepare(
                     "SELECT CAST(COALESCE(SUM(le.amount), 0) AS TEXT)
                      FROM ledger_entries le
-                     WHERE le.account_id = ?1 AND le.date <= ?2"
+                     WHERE le.entity_id = ?1 AND le.account_id = ?2 AND le.date <= ?3"
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 let val: String = stmt.query_row(
-                    params![account_id, date_str],
+                    params![entity_id, account_id, date_str],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 Decimal::from_str(&val).unwrap_or(Decimal::ZERO)
@@ -463,7 +494,7 @@ impl StorageBackend for SqliteStorage {
 
     fn get_statement(
         &self,
-        _entity_id: &str,
+        entity_id: &str,
         account_id: &str,
         from: Bound<Date>,
         to: Bound<Date>,
@@ -474,8 +505,8 @@ impl StorageBackend for SqliteStorage {
         // Verify account exists
         let exists: bool = conn
             .query_row(
-                "SELECT COUNT(*) > 0 FROM accounts WHERE id = ?1",
-                params![account_id],
+                "SELECT COUNT(*) > 0 FROM accounts WHERE entity_id = ?1 AND id = ?2",
+                params![entity_id, account_id],
                 |row| row.get(0),
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -502,7 +533,7 @@ impl StorageBackend for SqliteStorage {
             Bound::Unbounded => ("<=", "9999-12-31".to_string()),
         };
 
-        // Calculate opening balance (reuse get_balance logic but without the lock)
+        // Calculate opening balance
         let mut opening_balance = match dimension {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
@@ -510,9 +541,9 @@ impl StorageBackend for SqliteStorage {
                     "SELECT CAST(COALESCE(SUM(le.amount), 0) AS TEXT)
                      FROM ledger_entries le
                      JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-                     WHERE le.account_id = ?1 AND le.date <= ?2
-                       AND led.dimension_key = ?3 AND (led.dimension_value = ?4 OR led.dimension_value LIKE ?5 || '/%' ESCAPE '\\')",
-                    params![account_id, date_to_str(balance_date), dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
+                     WHERE le.entity_id = ?1 AND le.account_id = ?2 AND le.date <= ?3
+                       AND led.dimension_key = ?4 AND (led.dimension_value = ?5 OR led.dimension_value LIKE ?6 || '/%' ESCAPE '\\')",
+                    params![entity_id, account_id, date_to_str(balance_date), dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 Decimal::from_str(&val).unwrap_or(Decimal::ZERO)
@@ -521,8 +552,8 @@ impl StorageBackend for SqliteStorage {
                 let val: String = conn.query_row(
                     "SELECT CAST(COALESCE(SUM(le.amount), 0) AS TEXT)
                      FROM ledger_entries le
-                     WHERE le.account_id = ?1 AND le.date <= ?2",
-                    params![account_id, date_to_str(balance_date)],
+                     WHERE le.entity_id = ?1 AND le.account_id = ?2 AND le.date <= ?3",
+                    params![entity_id, account_id, date_to_str(balance_date)],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 Decimal::from_str(&val).unwrap_or(Decimal::ZERO)
@@ -536,8 +567,8 @@ impl StorageBackend for SqliteStorage {
                  FROM ledger_entries le
                  JOIN journals j ON j.id = le.journal_id
                  JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-                 WHERE le.account_id = ?1 AND le.date {} ?2 AND le.date {} ?3
-                   AND led.dimension_key = ?4 AND (led.dimension_value = ?5 OR led.dimension_value LIKE ?6 || '/%' ESCAPE '\\')
+                 WHERE le.entity_id = ?1 AND le.account_id = ?2 AND le.date {} ?3 AND le.date {} ?4
+                   AND led.dimension_key = ?5 AND (led.dimension_value = ?6 OR led.dimension_value LIKE ?7 || '/%' ESCAPE '\\')
                  ORDER BY le.date, le.id",
                 from_op, to_op
             ),
@@ -545,7 +576,7 @@ impl StorageBackend for SqliteStorage {
                 "SELECT le.journal_id, le.date, j.description, le.amount
                  FROM ledger_entries le
                  JOIN journals j ON j.id = le.journal_id
-                 WHERE le.account_id = ?1 AND le.date {} ?2 AND le.date {} ?3
+                 WHERE le.entity_id = ?1 AND le.account_id = ?2 AND le.date {} ?3 AND le.date {} ?4
                  ORDER BY le.date, le.id",
                 from_op, to_op
             ),
@@ -561,7 +592,7 @@ impl StorageBackend for SqliteStorage {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
                 stmt.query_map(
-                    params![account_id, from_str, to_str, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
+                    params![entity_id, account_id, from_str, to_str, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     row_mapper,
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?
@@ -570,7 +601,7 @@ impl StorageBackend for SqliteStorage {
             }
             None => {
                 stmt.query_map(
-                    params![account_id, from_str, to_str],
+                    params![entity_id, account_id, from_str, to_str],
                     row_mapper,
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?
@@ -600,7 +631,7 @@ impl StorageBackend for SqliteStorage {
 
     fn get_dimension_values(
         &self,
-        _entity_id: &str,
+        entity_id: &str,
         account_id: &str,
         dimension_key: Arc<str>,
         from: Date,
@@ -612,12 +643,12 @@ impl StorageBackend for SqliteStorage {
             "SELECT DISTINCT led.dimension_value
              FROM ledger_entries le
              JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
-             WHERE le.account_id = ?1 AND led.dimension_key = ?2
-               AND le.date >= ?3 AND le.date <= ?4"
+             WHERE le.entity_id = ?1 AND le.account_id = ?2 AND led.dimension_key = ?3
+               AND le.date >= ?4 AND le.date <= ?5"
         ).map_err(|e| StorageError::Other(e.to_string()))?;
 
         let rows = stmt.query_map(
-            params![account_id, dimension_key.as_ref(), date_to_str(from), date_to_str(to)],
+            params![entity_id, account_id, dimension_key.as_ref(), date_to_str(from), date_to_str(to)],
             |row| row.get::<_, String>(0),
         )
         .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -630,13 +661,13 @@ impl StorageBackend for SqliteStorage {
         Ok(result)
     }
 
-    fn list_accounts(&self, _entity_id: &str) -> Vec<(Arc<str>, AccountType)> {
+    fn list_accounts(&self, entity_id: &str) -> Vec<(Arc<str>, AccountType)> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, account_type FROM accounts ORDER BY id")
+            .prepare("SELECT id, account_type FROM accounts WHERE entity_id = ?1 ORDER BY id")
             .unwrap();
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(params![entity_id], |row| {
                 let id: String = row.get(0)?;
                 let at: String = row.get(1)?;
                 Ok((id, at))
@@ -650,13 +681,13 @@ impl StorageBackend for SqliteStorage {
         result
     }
 
-    fn list_rates(&self, _entity_id: &str) -> Vec<Arc<str>> {
+    fn list_rates(&self, entity_id: &str) -> Vec<Arc<str>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT DISTINCT id FROM rates ORDER BY id")
+            .prepare("SELECT DISTINCT id FROM rates WHERE entity_id = ?1 ORDER BY id")
             .unwrap();
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(params![entity_id], |row| {
                 let id: String = row.get(0)?;
                 Ok(id)
             })
@@ -701,7 +732,7 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
-    fn get_lots(&self, _entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
+    fn get_lots(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Vec<LotItem>, StorageError> {
         let conn = self.conn.lock().unwrap();
 
         let lot_rows: Vec<(i64, String, String, String)> = match dimension {
@@ -709,16 +740,16 @@ impl StorageBackend for SqliteStorage {
                 let dim_val_str = data_value_to_str(dim_val);
                 let mut stmt = conn.prepare(
                     "SELECT l.id, l.date, l.units_remaining, l.cost_per_unit FROM lots l
-                     WHERE l.account_id = ?1 AND CAST(l.units_remaining AS REAL) > 0
+                     WHERE l.entity_id = ?1 AND l.account_id = ?2 AND CAST(l.units_remaining AS REAL) > 0
                        AND EXISTS (
                          SELECT 1 FROM lot_dimensions ld
-                         WHERE ld.lot_id = l.id AND ld.dimension_key = ?2
-                           AND (ld.dimension_value = ?3 OR ld.dimension_value LIKE ?4 || '/%' ESCAPE '\\')
+                         WHERE ld.lot_id = l.id AND ld.dimension_key = ?3
+                           AND (ld.dimension_value = ?4 OR ld.dimension_value LIKE ?5 || '/%' ESCAPE '\\')
                        )
                      ORDER BY l.date ASC"
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 let rows = stmt.query_map(
-                    params![account_id, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
+                    params![entity_id, account_id, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?
@@ -729,11 +760,11 @@ impl StorageBackend for SqliteStorage {
             None => {
                 let mut stmt = conn.prepare(
                     "SELECT l.id, l.date, l.units_remaining, l.cost_per_unit FROM lots l
-                     WHERE l.account_id = ?1 AND CAST(l.units_remaining AS REAL) > 0
+                     WHERE l.entity_id = ?1 AND l.account_id = ?2 AND CAST(l.units_remaining AS REAL) > 0
                      ORDER BY l.date ASC"
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 let rows = stmt.query_map(
-                    params![account_id],
+                    params![entity_id, account_id],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?
@@ -776,7 +807,7 @@ impl StorageBackend for SqliteStorage {
         Ok(result)
     }
 
-    fn get_total_units(&self, _entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
+    fn get_total_units(&self, entity_id: &str, account_id: &str, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<Decimal, StorageError> {
         let conn = self.conn.lock().unwrap();
 
         let total_str: String = match dimension {
@@ -784,21 +815,21 @@ impl StorageBackend for SqliteStorage {
                 let dim_val_str = data_value_to_str(dim_val);
                 conn.query_row(
                     "SELECT CAST(COALESCE(SUM(CAST(l.units_remaining AS REAL)), 0) AS TEXT) FROM lots l
-                     WHERE l.account_id = ?1 AND CAST(l.units_remaining AS REAL) > 0
+                     WHERE l.entity_id = ?1 AND l.account_id = ?2 AND CAST(l.units_remaining AS REAL) > 0
                        AND EXISTS (
                          SELECT 1 FROM lot_dimensions ld
-                         WHERE ld.lot_id = l.id AND ld.dimension_key = ?2
-                           AND (ld.dimension_value = ?3 OR ld.dimension_value LIKE ?4 || '/%' ESCAPE '\\')
+                         WHERE ld.lot_id = l.id AND ld.dimension_key = ?3
+                           AND (ld.dimension_value = ?4 OR ld.dimension_value LIKE ?5 || '/%' ESCAPE '\\')
                        )",
-                    params![account_id, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
+                    params![entity_id, account_id, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?
             }
             None => {
                 conn.query_row(
                     "SELECT CAST(COALESCE(SUM(CAST(l.units_remaining AS REAL)), 0) AS TEXT) FROM lots l
-                     WHERE l.account_id = ?1 AND CAST(l.units_remaining AS REAL) > 0",
-                    params![account_id],
+                     WHERE l.entity_id = ?1 AND l.account_id = ?2 AND CAST(l.units_remaining AS REAL) > 0",
+                    params![entity_id, account_id],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?
             }
@@ -808,7 +839,7 @@ impl StorageBackend for SqliteStorage {
             .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))
     }
 
-    fn deplete_lots(&self, _entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
+    fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
         let conn = self.conn.lock().unwrap();
 
         let order = match method {
@@ -821,11 +852,11 @@ impl StorageBackend for SqliteStorage {
         let lot_rows: Vec<(i64, String, String)> = if dimensions.is_empty() {
             let mut stmt = conn.prepare(&format!(
                 "SELECT id, units_remaining, cost_per_unit FROM lots
-                 WHERE account_id = ?1 AND CAST(units_remaining AS REAL) > 0
+                 WHERE entity_id = ?1 AND account_id = ?2 AND CAST(units_remaining AS REAL) > 0
                  ORDER BY date {order}"
             )).map_err(|e| StorageError::Other(e.to_string()))?;
             let rows = stmt.query_map(
-                params![account_id],
+                params![entity_id, account_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(|e| StorageError::Other(e.to_string()))?
@@ -838,13 +869,13 @@ impl StorageBackend for SqliteStorage {
                 let _ = (k, v); // used below via parameter binding
                 format!(
                     "EXISTS (SELECT 1 FROM lot_dimensions ld{i} WHERE ld{i}.lot_id = lots.id AND ld{i}.dimension_key = ?{p1} AND (ld{i}.dimension_value = ?{p2} OR ld{i}.dimension_value LIKE ?{p3} || '/%' ESCAPE '\\'))",
-                    i = i, p1 = 2 + i * 3, p2 = 3 + i * 3, p3 = 4 + i * 3
+                    i = i, p1 = 3 + i * 3, p2 = 4 + i * 3, p3 = 5 + i * 3
                 )
             }).collect();
 
             let query = format!(
                 "SELECT id, units_remaining, cost_per_unit FROM lots
-                 WHERE account_id = ?1 AND CAST(units_remaining AS REAL) > 0
+                 WHERE entity_id = ?1 AND account_id = ?2 AND CAST(units_remaining AS REAL) > 0
                    AND {}
                  ORDER BY date {order}",
                 dim_conditions.join(" AND ")
@@ -852,8 +883,9 @@ impl StorageBackend for SqliteStorage {
 
             let mut stmt = conn.prepare(&query).map_err(|e| StorageError::Other(e.to_string()))?;
 
-            // Build params: account_id + pairs of (key, value)
+            // Build params: entity_id + account_id + pairs of (key, value, escaped_value)
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+            param_values.push(Box::new(entity_id.to_string()));
             param_values.push(Box::new(account_id.to_string()));
             for (k, v) in dimensions {
                 param_values.push(Box::new(k.to_string()));
@@ -954,7 +986,7 @@ impl StorageBackend for SqliteStorage {
         }
     }
 
-    fn split_lots(&self, _entity_id: &str, account_id: &str, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
+    fn split_lots(&self, entity_id: &str, account_id: &str, new_per_old: Decimal, dimension: Option<&(Arc<str>, Arc<DataValue>)>) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
 
         match dimension {
@@ -962,24 +994,24 @@ impl StorageBackend for SqliteStorage {
                 let dim_val_str = data_value_to_str(dim_val);
                 conn.execute(
                     "UPDATE lots SET
-                        units_remaining = CAST(CAST(units_remaining AS REAL) * CAST(?2 AS REAL) AS TEXT),
-                        cost_per_unit = CAST(CAST(cost_per_unit AS REAL) / CAST(?2 AS REAL) AS TEXT)
-                     WHERE account_id = ?1 AND CAST(units_remaining AS REAL) > 0
+                        units_remaining = CAST(CAST(units_remaining AS REAL) * CAST(?3 AS REAL) AS TEXT),
+                        cost_per_unit = CAST(CAST(cost_per_unit AS REAL) / CAST(?3 AS REAL) AS TEXT)
+                     WHERE entity_id = ?1 AND account_id = ?2 AND CAST(units_remaining AS REAL) > 0
                        AND EXISTS (
                          SELECT 1 FROM lot_dimensions ld
-                         WHERE ld.lot_id = lots.id AND ld.dimension_key = ?3
-                           AND (ld.dimension_value = ?4 OR ld.dimension_value LIKE ?5 || '/%' ESCAPE '\\')
+                         WHERE ld.lot_id = lots.id AND ld.dimension_key = ?4
+                           AND (ld.dimension_value = ?5 OR ld.dimension_value LIKE ?6 || '/%' ESCAPE '\\')
                        )",
-                    params![account_id, new_per_old.to_string(), dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
+                    params![entity_id, account_id, new_per_old.to_string(), dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
             }
             None => {
                 conn.execute(
                     "UPDATE lots SET
-                        units_remaining = CAST(CAST(units_remaining AS REAL) * CAST(?2 AS REAL) AS TEXT),
-                        cost_per_unit = CAST(CAST(cost_per_unit AS REAL) / CAST(?2 AS REAL) AS TEXT)
-                     WHERE account_id = ?1 AND CAST(units_remaining AS REAL) > 0",
-                    params![account_id, new_per_old.to_string()],
+                        units_remaining = CAST(CAST(units_remaining AS REAL) * CAST(?3 AS REAL) AS TEXT),
+                        cost_per_unit = CAST(CAST(cost_per_unit AS REAL) / CAST(?3 AS REAL) AS TEXT)
+                     WHERE entity_id = ?1 AND account_id = ?2 AND CAST(units_remaining AS REAL) > 0",
+                    params![entity_id, account_id, new_per_old.to_string()],
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
             }
         }
@@ -987,11 +1019,11 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
-    fn get_unit_rate_id(&self, _entity_id: &str, account_id: &str) -> Option<Arc<str>> {
+    fn get_unit_rate_id(&self, entity_id: &str, account_id: &str) -> Option<Arc<str>> {
         let conn = self.conn.lock().unwrap();
         let result: Result<Option<String>, _> = conn.query_row(
-            "SELECT unit_rate_id FROM accounts WHERE id = ?1",
-            params![account_id],
+            "SELECT unit_rate_id FROM accounts WHERE entity_id = ?1 AND id = ?2",
+            params![entity_id, account_id],
             |row| row.get(0),
         );
         match result {
@@ -1000,11 +1032,11 @@ impl StorageBackend for SqliteStorage {
         }
     }
 
-    fn is_unit_account(&self, _entity_id: &str, account_id: &str) -> bool {
+    fn is_unit_account(&self, entity_id: &str, account_id: &str) -> bool {
         let conn = self.conn.lock().unwrap();
         let result: Result<bool, _> = conn.query_row(
-            "SELECT unit_rate_id IS NOT NULL FROM accounts WHERE id = ?1",
-            params![account_id],
+            "SELECT unit_rate_id IS NOT NULL FROM accounts WHERE entity_id = ?1 AND id = ?2",
+            params![entity_id, account_id],
             |row| row.get(0),
         );
         result.unwrap_or(false)
