@@ -39,6 +39,9 @@ pub struct Config {
 
     #[serde(default)]
     pub grpc: GrpcConfig,
+
+    #[serde(default)]
+    pub nl: NlConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -100,6 +103,37 @@ impl Default for GrpcConfig {
 
 fn default_grpc_port() -> u16 {
     50051
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct NlConfig {
+    /// Enable the natural language endpoint
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// LLM provider: "openai", "anthropic", or "azure_openai"
+    #[serde(default = "default_nl_provider")]
+    pub provider: String,
+
+    /// API key for the LLM provider
+    #[serde(default)]
+    pub api_key: String,
+
+    /// Model name (e.g., "gpt-4", "claude-sonnet-4-20250514")
+    #[serde(default = "default_nl_model")]
+    pub model: String,
+
+    /// API base URL (for Azure OpenAI or custom endpoints)
+    #[serde(default)]
+    pub api_base: String,
+}
+
+fn default_nl_provider() -> String {
+    "openai".to_string()
+}
+
+fn default_nl_model() -> String {
+    "gpt-4".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -177,6 +211,7 @@ impl Default for Config {
             auth: AuthConfig::default(),
             storage: StorageConfig::default(),
             grpc: GrpcConfig::default(),
+            nl: NlConfig::default(),
         }
     }
 }

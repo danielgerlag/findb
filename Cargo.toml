@@ -12,7 +12,11 @@ name = "dblentry"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+nl = ["reqwest"]
+
 [dependencies]
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], optional = true }
 dblentry-core = { path = "crates/dblentry-core" }
 dblentry-sqlite = { path = "crates/dblentry-sqlite" }
 dblentry-postgres = { path = "crates/dblentry-postgres" }

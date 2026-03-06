@@ -10,6 +10,7 @@ use dblentry::api::v1::handlers::fql_handler_v1;
 use dblentry::api::v1::schema::{SchemaState, schema_overview, schema_entity};
 use dblentry::api::v1::handlers::batch_fql_handler;
 use dblentry::api::v1::spec::fql_spec_handler;
+use dblentry::api::v1::nl::{nl_handler, NlState};
 use dblentry::idempotency::IdempotencyStore;
 use dblentry::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max, Units, MarketValue, UnrealizedGain, CostBasis, Lots}, lexer};
 use dblentry_sqlite::SqliteStorage;
@@ -142,6 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/fql", post(fql_handler_v1))
         .route("/api/v1/fql/batch", post(batch_fql_handler))
         .route("/api/v1/fql/spec", get(fql_spec_handler))
+        .route("/api/v1/nl", post(nl_handler))
         .route("/api/accounts", post(rest_create_account).get(rest_list_accounts))
         .route("/api/accounts/:id/balance", get(rest_get_balance))
         .route("/api/accounts/:id/statement", get(rest_get_statement))
@@ -175,6 +177,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(SchemaState {
             storage: storage.clone(),
             function_registry: function_registry.clone(),
+        }))
+        .layer(Extension(NlState {
+            config: config.nl.clone(),
         }));
 
     // Public routes (no auth)
