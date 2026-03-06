@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{Router, routing::{post, get}, extract::{State, Path, Query}, response::IntoResponse, http::StatusCode, Json, middleware, Extension};
+use axum::{Router, routing::{post, get}, extract::{State, Path, Query, DefaultBodyLimit}, response::IntoResponse, http::StatusCode, Json, middleware, Extension};
 use clap::Parser;
 use dblentry::grpc::{pb::dbl_entry_server::DblEntryServer, DblEntryService};
 use dblentry::auth::auth_middleware;
@@ -180,7 +180,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .layer(Extension(NlState {
             config: config.nl.clone(),
-        }));
+        }))
+        .layer(DefaultBodyLimit::max(1024 * 1024)); // 1MB max request body
 
     // Public routes (no auth)
     let public = Router::new()
@@ -324,6 +325,16 @@ fn is_safe_identifier(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
+/// Validate that a string is a safe date literal (YYYY-MM-DD format only).
+fn is_safe_date(s: &str) -> bool {
+    s.len() == 10
+        && s.as_bytes()[4] == b'-'
+        && s.as_bytes()[7] == b'-'
+        && s.chars().enumerate().all(|(i, c)| {
+            if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() }
+        })
+}
+
 // --- REST API types ---
 
 #[derive(Deserialize)]
@@ -453,8 +464,8 @@ async fn rest_set_rate(
     if !is_safe_identifier(&req.rate) && req.rate.parse::<f64>().is_err() {
         return rest_err(StatusCode::BAD_REQUEST, "Invalid rate value".to_string());
     }
-    if !is_safe_identifier(&req.date) {
-        return rest_err(StatusCode::BAD_REQUEST, "Invalid date".to_string());
+    if !is_safe_date(&req.date) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid date format: expected YYYY-MM-DD".to_string());
     }
     let fql = format!("SET RATE {} {} {}", id, req.rate, req.date);
     execute_fql_rest(&exec, &fql).await
@@ -464,8 +475,8 @@ async fn rest_create_journal(
     State(exec): State<Arc<StatementExecutor>>,
     Json(req): Json<CreateJournalRequest>,
 ) -> impl IntoResponse {
-    if !is_safe_identifier(&req.date) {
-        return rest_err(StatusCode::BAD_REQUEST, "Invalid date".to_string());
+    if !is_safe_date(&req.date) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid date format: expected YYYY-MM-DD".to_string());
     }
     if req.amount.parse::<rust_decimal::Decimal>().is_err() {
         return rest_err(StatusCode::BAD_REQUEST, "Invalid amount".to_string());
@@ -513,6 +524,9 @@ async fn rest_get_balance(
     if !is_safe_identifier(&id) {
         return rest_err(StatusCode::BAD_REQUEST, "Invalid account ID".to_string());
     }
+    if !is_safe_date(&params.date) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid date format: expected YYYY-MM-DD".to_string());
+    }
     let dim = match (&params.dimension_key, &params.dimension_value) {
         (Some(k), Some(v)) => {
             if !is_safe_identifier(k) {
@@ -534,6 +548,9 @@ async fn rest_get_statement(
     if !is_safe_identifier(&id) {
         return rest_err(StatusCode::BAD_REQUEST, "Invalid account ID".to_string());
     }
+    if !is_safe_date(&params.from) || !is_safe_date(&params.to) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid date format: expected YYYY-MM-DD".to_string());
+    }
     let dim = match (&params.dimension_key, &params.dimension_value) {
         (Some(k), Some(v)) => {
             if !is_safe_identifier(k) {
@@ -551,6 +568,9 @@ async fn rest_trial_balance(
     State(exec): State<Arc<StatementExecutor>>,
     Query(params): Query<TrialBalanceQuery>,
 ) -> impl IntoResponse {
+    if !is_safe_date(&params.date) {
+        return rest_err(StatusCode::BAD_REQUEST, "Invalid date format: expected YYYY-MM-DD".to_string());
+    }
     let fql = format!("GET trial_balance({}) AS result", params.date);
     execute_fql_rest(&exec, &fql).await
 }

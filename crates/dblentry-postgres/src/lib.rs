@@ -18,6 +18,7 @@ use dblentry_core::{
     CreateJournalCommand, CreateRateCommand, LedgerEntryCommand, SetRateCommand,
     DataValue, StatementTxn,
     StorageBackend, StorageError, TransactionId,
+    escape_like,
 };
 
 pub struct PostgresStorage {
@@ -467,6 +468,7 @@ impl StorageBackend for PostgresStorage {
         let total_str: String = match dimension {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
+                let escaped_dim_val_str = escape_like(&dim_val_str);
                 let row = client
                     .query_one(
                         "SELECT COALESCE(SUM(le.amount::NUMERIC), 0)::TEXT
@@ -474,8 +476,8 @@ impl StorageBackend for PostgresStorage {
                          JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                          WHERE le.account_id = $1 AND le.date <= $2
                            AND led.dimension_key = $3
-                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $4 || '/%')",
-                        &[&account_id, &date_str, &dim_key.as_ref(), &dim_val_str],
+                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $5 || '/%' ESCAPE '\\')",
+                        &[&account_id, &date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -541,6 +543,7 @@ impl StorageBackend for PostgresStorage {
         let opening_str: String = match dimension {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
+                let escaped_dim_val_str = escape_like(&dim_val_str);
                 let row = client
                     .query_one(
                         "SELECT COALESCE(SUM(le.amount::NUMERIC), 0)::TEXT
@@ -548,8 +551,8 @@ impl StorageBackend for PostgresStorage {
                          JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                          WHERE le.account_id = $1 AND le.date <= $2
                            AND led.dimension_key = $3
-                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $4 || '/%')",
-                        &[&account_id, &balance_date_str, &dim_key.as_ref(), &dim_val_str],
+                           AND (led.dimension_value = $4 OR led.dimension_value LIKE $5 || '/%' ESCAPE '\\')",
+                        &[&account_id, &balance_date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -578,7 +581,7 @@ impl StorageBackend for PostgresStorage {
                  JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                  WHERE le.account_id = $1 AND le.date {} $2 AND le.date {} $3
                    AND led.dimension_key = $4
-                   AND (led.dimension_value = $5 OR led.dimension_value LIKE $5 || '/%')
+                   AND (led.dimension_value = $5 OR led.dimension_value LIKE $6 || '/%' ESCAPE '\\')
                  ORDER BY le.date, le.id",
                 from_op, to_op
             ),
@@ -595,10 +598,11 @@ impl StorageBackend for PostgresStorage {
         let rows = match dimension {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
+                let escaped_dim_val_str = escape_like(&dim_val_str);
                 client
                     .query(
                         &query,
-                        &[&account_id, &from_str, &to_str, &dim_key.as_ref(), &dim_val_str],
+                        &[&account_id, &from_str, &to_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?
             }
@@ -739,6 +743,7 @@ impl StorageBackend for PostgresStorage {
         let lot_rows: Vec<(i64, String, String, String)> = match dimension {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
+                let escaped_dim_val_str = escape_like(&dim_val_str);
                 let rows = client
                     .query(
                         "SELECT l.id, l.date, l.units_remaining, l.cost_per_unit FROM lots l
@@ -746,10 +751,10 @@ impl StorageBackend for PostgresStorage {
                            AND EXISTS (
                              SELECT 1 FROM lot_dimensions ld
                              WHERE ld.lot_id = l.id AND ld.dimension_key = $2
-                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $3 || '/%')
+                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $4 || '/%' ESCAPE '\\')
                            )
                          ORDER BY l.date ASC",
-                        &[&account_id, &dim_key.as_ref(), &dim_val_str],
+                        &[&account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 rows.iter()
@@ -810,6 +815,7 @@ impl StorageBackend for PostgresStorage {
         let total_str: String = match dimension {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
+                let escaped_dim_val_str = escape_like(&dim_val_str);
                 let row = client
                     .query_one(
                         "SELECT COALESCE(SUM(l.units_remaining::NUMERIC), 0)::TEXT FROM lots l
@@ -817,9 +823,9 @@ impl StorageBackend for PostgresStorage {
                            AND EXISTS (
                              SELECT 1 FROM lot_dimensions ld
                              WHERE ld.lot_id = l.id AND ld.dimension_key = $2
-                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $3 || '/%')
+                               AND (ld.dimension_value = $3 OR ld.dimension_value LIKE $4 || '/%' ESCAPE '\\')
                            )",
-                        &[&account_id, &dim_key.as_ref(), &dim_val_str],
+                        &[&account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
                 row.get(0)
@@ -865,10 +871,11 @@ impl StorageBackend for PostgresStorage {
         } else {
             // Build dimension filter: all dimension key/value pairs must match (prefix)
             let dim_conditions: Vec<String> = dimensions.iter().enumerate().map(|(i, _)| {
-                let p1 = 2 + i * 2;
-                let p2 = 3 + i * 2;
+                let p1 = 2 + i * 3;
+                let p2 = 3 + i * 3;
+                let p3 = 4 + i * 3;
                 format!(
-                    "EXISTS (SELECT 1 FROM lot_dimensions ld{i} WHERE ld{i}.lot_id = lots.id AND ld{i}.dimension_key = ${p1} AND (ld{i}.dimension_value = ${p2} OR ld{i}.dimension_value LIKE ${p2} || '/%'))"
+                    "EXISTS (SELECT 1 FROM lot_dimensions ld{i} WHERE ld{i}.lot_id = lots.id AND ld{i}.dimension_key = ${p1} AND (ld{i}.dimension_value = ${p2} OR ld{i}.dimension_value LIKE ${p3} || '/%' ESCAPE '\\'))"
                 )
             }).collect();
 
@@ -880,12 +887,14 @@ impl StorageBackend for PostgresStorage {
                 dim_conditions.join(" AND ")
             );
 
-            // Build params: account_id + pairs of (key, value)
+            // Build params: account_id + triples of (key, value, escaped_value)
             let mut param_values: Vec<String> = Vec::new();
             param_values.push(account_id.to_string());
             for (k, v) in dimensions {
                 param_values.push(k.to_string());
-                param_values.push(data_value_to_str(v));
+                let val = data_value_to_str(v);
+                param_values.push(val.clone());
+                param_values.push(escape_like(&val));
             }
             let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
                 param_values.iter().map(|s| s as &(dyn postgres::types::ToSql + Sync)).collect();
@@ -994,6 +1003,7 @@ impl StorageBackend for PostgresStorage {
         match dimension {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
+                let escaped_dim_val_str = escape_like(&dim_val_str);
                 client
                     .execute(
                         "UPDATE lots SET
@@ -1003,9 +1013,9 @@ impl StorageBackend for PostgresStorage {
                            AND EXISTS (
                              SELECT 1 FROM lot_dimensions ld
                              WHERE ld.lot_id = lots.id AND ld.dimension_key = $3
-                               AND (ld.dimension_value = $4 OR ld.dimension_value LIKE $4 || '/%')
+                               AND (ld.dimension_value = $4 OR ld.dimension_value LIKE $5 || '/%' ESCAPE '\\')
                            )",
-                        &[&account_id, &ratio_str, &dim_key.as_ref(), &dim_val_str],
+                        &[&account_id, &ratio_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
                     .map_err(|e| StorageError::Other(e.to_string()))?;
             }

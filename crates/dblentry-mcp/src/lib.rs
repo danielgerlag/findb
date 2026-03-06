@@ -105,6 +105,35 @@ struct EntityQuery {
     entity: String,
 }
 
+/// Validate that a string is a safe date literal (YYYY-MM-DD format only).
+fn is_safe_date(s: &str) -> bool {
+    s.len() == 10
+        && s.as_bytes()[4] == b'-'
+        && s.as_bytes()[7] == b'-'
+        && s.chars().enumerate().all(|(i, c)| {
+            if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() }
+        })
+}
+
+/// Validate that a value contains only safe identifier characters.
+fn is_safe_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Validate that a dimension filter is in safe "Key=Value" format.
+fn is_safe_dimension(s: &str) -> bool {
+    if let Some(eq_pos) = s.find('=') {
+        let key = &s[..eq_pos];
+        let value = &s[eq_pos + 1..];
+        !key.is_empty()
+            && !value.is_empty()
+            && key.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && value.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '/' || c == '-' || c == ' ' || c == '\'')
+    } else {
+        false
+    }
+}
+
 impl DblEntryMcp {
     fn run_fql_sync(
         &self,
@@ -151,6 +180,17 @@ impl DblEntryMcp {
         &self,
         Parameters(input): Parameters<GetBalanceInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        if !is_safe_identifier(&input.account) {
+            return Ok(CallToolResult::error(vec![Content::text("Invalid account ID")]));
+        }
+        if !is_safe_date(&input.date) {
+            return Ok(CallToolResult::error(vec![Content::text("Invalid date format: expected YYYY-MM-DD")]));
+        }
+        if let Some(ref d) = input.dimension {
+            if !is_safe_dimension(d) {
+                return Ok(CallToolResult::error(vec![Content::text("Invalid dimension format: expected Key=Value")]));
+            }
+        }
         let dim = input
             .dimension
             .as_deref()
@@ -168,6 +208,17 @@ impl DblEntryMcp {
         &self,
         Parameters(input): Parameters<GetStatementInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        if !is_safe_identifier(&input.account) {
+            return Ok(CallToolResult::error(vec![Content::text("Invalid account ID")]));
+        }
+        if !is_safe_date(&input.from) || !is_safe_date(&input.to) {
+            return Ok(CallToolResult::error(vec![Content::text("Invalid date format: expected YYYY-MM-DD")]));
+        }
+        if let Some(ref d) = input.dimension {
+            if !is_safe_dimension(d) {
+                return Ok(CallToolResult::error(vec![Content::text("Invalid dimension format: expected Key=Value")]));
+            }
+        }
         let dim = input
             .dimension
             .as_deref()
@@ -185,6 +236,9 @@ impl DblEntryMcp {
         &self,
         Parameters(input): Parameters<GetTrialBalanceInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        if !is_safe_date(&input.date) {
+            return Ok(CallToolResult::error(vec![Content::text("Invalid date format: expected YYYY-MM-DD")]));
+        }
         let fql = format!("GET trial_balance({}) AS result", input.date);
         self.run_fql_sync(&fql, input.entity.as_deref())
     }
@@ -194,6 +248,9 @@ impl DblEntryMcp {
         &self,
         Parameters(input): Parameters<GetIncomeStatementInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        if !is_safe_date(&input.from) || !is_safe_date(&input.to) {
+            return Ok(CallToolResult::error(vec![Content::text("Invalid date format: expected YYYY-MM-DD")]));
+        }
         let fql = format!(
             "GET income_statement({}, {}) AS result",
             input.from, input.to

@@ -14,6 +14,7 @@ use time::{Date, Month, OffsetDateTime};
 use uuid::Uuid;
 
 use dblentry_core::{
+    escape_like,
     AccountExpression, AccountType, CostMethod, LotItem,
     CreateJournalCommand, CreateRateCommand, LedgerEntryCommand, SetRateCommand,
     DataValue, StatementTxn,
@@ -435,10 +436,10 @@ impl StorageBackend for SqliteStorage {
                      FROM ledger_entries le
                      JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                      WHERE le.account_id = ?1 AND le.date <= ?2
-                       AND led.dimension_key = ?3 AND (led.dimension_value = ?4 OR led.dimension_value LIKE ?4 || '/%')"
+                       AND led.dimension_key = ?3 AND (led.dimension_value = ?4 OR led.dimension_value LIKE ?5 || '/%' ESCAPE '\\')"
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 let val: String = stmt.query_row(
-                    params![account_id, date_str, dim_key.as_ref(), dim_val_str],
+                    params![account_id, date_str, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 Decimal::from_str(&val).unwrap_or(Decimal::ZERO)
@@ -510,8 +511,8 @@ impl StorageBackend for SqliteStorage {
                      FROM ledger_entries le
                      JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                      WHERE le.account_id = ?1 AND le.date <= ?2
-                       AND led.dimension_key = ?3 AND (led.dimension_value = ?4 OR led.dimension_value LIKE ?4 || '/%')",
-                    params![account_id, date_to_str(balance_date), dim_key.as_ref(), dim_val_str],
+                       AND led.dimension_key = ?3 AND (led.dimension_value = ?4 OR led.dimension_value LIKE ?5 || '/%' ESCAPE '\\')",
+                    params![account_id, date_to_str(balance_date), dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 Decimal::from_str(&val).unwrap_or(Decimal::ZERO)
@@ -536,7 +537,7 @@ impl StorageBackend for SqliteStorage {
                  JOIN journals j ON j.id = le.journal_id
                  JOIN ledger_entry_dimensions led ON led.ledger_entry_id = le.id
                  WHERE le.account_id = ?1 AND le.date {} ?2 AND le.date {} ?3
-                   AND led.dimension_key = ?4 AND (led.dimension_value = ?5 OR led.dimension_value LIKE ?5 || '/%')
+                   AND led.dimension_key = ?4 AND (led.dimension_value = ?5 OR led.dimension_value LIKE ?6 || '/%' ESCAPE '\\')
                  ORDER BY le.date, le.id",
                 from_op, to_op
             ),
@@ -560,7 +561,7 @@ impl StorageBackend for SqliteStorage {
             Some((dim_key, dim_val)) => {
                 let dim_val_str = data_value_to_str(dim_val);
                 stmt.query_map(
-                    params![account_id, from_str, to_str, dim_key.as_ref(), dim_val_str],
+                    params![account_id, from_str, to_str, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     row_mapper,
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?
@@ -712,12 +713,12 @@ impl StorageBackend for SqliteStorage {
                        AND EXISTS (
                          SELECT 1 FROM lot_dimensions ld
                          WHERE ld.lot_id = l.id AND ld.dimension_key = ?2
-                           AND (ld.dimension_value = ?3 OR ld.dimension_value LIKE ?3 || '/%')
+                           AND (ld.dimension_value = ?3 OR ld.dimension_value LIKE ?4 || '/%' ESCAPE '\\')
                        )
                      ORDER BY l.date ASC"
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
                 let rows = stmt.query_map(
-                    params![account_id, dim_key.as_ref(), dim_val_str],
+                    params![account_id, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .map_err(|e| StorageError::Other(e.to_string()))?
@@ -787,9 +788,9 @@ impl StorageBackend for SqliteStorage {
                        AND EXISTS (
                          SELECT 1 FROM lot_dimensions ld
                          WHERE ld.lot_id = l.id AND ld.dimension_key = ?2
-                           AND (ld.dimension_value = ?3 OR ld.dimension_value LIKE ?3 || '/%')
+                           AND (ld.dimension_value = ?3 OR ld.dimension_value LIKE ?4 || '/%' ESCAPE '\\')
                        )",
-                    params![account_id, dim_key.as_ref(), dim_val_str],
+                    params![account_id, dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                     |row| row.get(0),
                 ).map_err(|e| StorageError::Other(e.to_string()))?
             }
@@ -836,8 +837,8 @@ impl StorageBackend for SqliteStorage {
             let dim_conditions: Vec<String> = dimensions.iter().enumerate().map(|(i, (k, v))| {
                 let _ = (k, v); // used below via parameter binding
                 format!(
-                    "EXISTS (SELECT 1 FROM lot_dimensions ld{i} WHERE ld{i}.lot_id = lots.id AND ld{i}.dimension_key = ?{p1} AND (ld{i}.dimension_value = ?{p2} OR ld{i}.dimension_value LIKE ?{p2} || '/%'))",
-                    i = i, p1 = 2 + i * 2, p2 = 3 + i * 2
+                    "EXISTS (SELECT 1 FROM lot_dimensions ld{i} WHERE ld{i}.lot_id = lots.id AND ld{i}.dimension_key = ?{p1} AND (ld{i}.dimension_value = ?{p2} OR ld{i}.dimension_value LIKE ?{p3} || '/%' ESCAPE '\\'))",
+                    i = i, p1 = 2 + i * 3, p2 = 3 + i * 3, p3 = 4 + i * 3
                 )
             }).collect();
 
@@ -856,7 +857,9 @@ impl StorageBackend for SqliteStorage {
             param_values.push(Box::new(account_id.to_string()));
             for (k, v) in dimensions {
                 param_values.push(Box::new(k.to_string()));
-                param_values.push(Box::new(data_value_to_str(v)));
+                let val_str = data_value_to_str(v);
+                param_values.push(Box::new(val_str.clone()));
+                param_values.push(Box::new(escape_like(&val_str)));
             }
             let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
 
@@ -965,9 +968,9 @@ impl StorageBackend for SqliteStorage {
                        AND EXISTS (
                          SELECT 1 FROM lot_dimensions ld
                          WHERE ld.lot_id = lots.id AND ld.dimension_key = ?3
-                           AND (ld.dimension_value = ?4 OR ld.dimension_value LIKE ?4 || '/%')
+                           AND (ld.dimension_value = ?4 OR ld.dimension_value LIKE ?5 || '/%' ESCAPE '\\')
                        )",
-                    params![account_id, new_per_old.to_string(), dim_key.as_ref(), dim_val_str],
+                    params![account_id, new_per_old.to_string(), dim_key.as_ref(), dim_val_str, escape_like(&dim_val_str)],
                 ).map_err(|e| StorageError::Other(e.to_string()))?;
             }
             None => {

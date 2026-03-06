@@ -369,7 +369,10 @@ impl ExpressionEvaluator {
                         if n2 >= 0 {
                             DataValue::Int(n1.pow(n2 as u32))
                         } else {
-                            DataValue::Money(Decimal::from_f64_retain((n1 as f64).powi(n2 as i32)).unwrap_or(Decimal::ZERO))
+                            // Use Decimal to avoid f64 precision loss
+                            Decimal::from(n1).checked_powd(Decimal::from(n2))
+                                .map(DataValue::Money)
+                                .unwrap_or(DataValue::Null)
                         }
                     },
                     (DataValue::Money(n1), DataValue::Int(n2)) => {

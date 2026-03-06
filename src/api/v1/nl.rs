@@ -317,7 +317,8 @@ async fn call_llm(
                 .map_err(|e| format!("Response read error: {}", e))?;
 
             if !status.is_success() {
-                return Err(format!("LLM API returned {}: {}", status, text));
+                tracing::error!("LLM API error ({}): {}", status, text);
+                return Err(format!("LLM provider returned HTTP {}", status.as_u16()));
             }
 
             let json: serde_json::Value =
@@ -355,7 +356,8 @@ async fn call_llm(
                 .map_err(|e| format!("Response read error: {}", e))?;
 
             if !status.is_success() {
-                return Err(format!("LLM API returned {}: {}", status, text));
+                tracing::error!("LLM API error ({}): {}", status, text);
+                return Err(format!("LLM provider returned HTTP {}", status.as_u16()));
             }
 
             let json: serde_json::Value =

@@ -11,7 +11,7 @@ use metrics::{counter, histogram};
 use crate::{
     api::{TextFqlResponse, TextFqlMetadata},
     evaluator::QueryVariables,
-    idempotency::IdempotencyStore,
+    idempotency::{IdempotencyStore, IdempotencyCheck},
     lexer,
     statement_executor::{ExecutionContext, StatementExecutor},
 };
@@ -26,6 +26,12 @@ fn wants_json(headers: &HeaderMap) -> bool {
         .and_then(|v| v.to_str().ok())
         .map(|v| v.contains("application/json"))
         .unwrap_or(false)
+}
+
+fn set_idempotency_header(response: &mut axum::response::Response, key: &str) {
+    if let Ok(val) = key.parse() {
+        response.headers_mut().insert("Idempotency-Key", val);
+    }
 }
 
 pub async fn fql_handler_v1(
@@ -43,16 +49,23 @@ pub async fn fql_handler_v1(
         .map(|s| s.to_string());
 
     if let Some(ref key) = idempotency_key {
-        if let Some((cached_value, _cached_status)) = idempotency.get(key) {
-            let mut response = (
-                StatusCode::from_u16(208).unwrap_or(StatusCode::OK),
-                Json(cached_value),
-            )
-                .into_response();
-            response
-                .headers_mut()
-                .insert("Idempotency-Key", key.parse().unwrap());
-            return response;
+        match idempotency.check_or_claim(key) {
+            IdempotencyCheck::Cached(cached_value, _) => {
+                let mut response = (
+                    StatusCode::from_u16(208).unwrap_or(StatusCode::OK),
+                    Json(cached_value),
+                )
+                    .into_response();
+                set_idempotency_header(&mut response, key);
+                return response;
+            }
+            IdempotencyCheck::InFlight => {
+                return (StatusCode::CONFLICT, Json(serde_json::json!({
+                    "success": false,
+                    "error": "Request with this idempotency key is already in progress"
+                }))).into_response();
+            }
+            IdempotencyCheck::Proceed => { /* continue execution */ }
         }
     }
 
@@ -72,9 +85,7 @@ pub async fn fql_handler_v1(
                 }
                 let mut response = (StatusCode::BAD_REQUEST, Json(json_value)).into_response();
                 if let Some(ref key) = idempotency_key {
-                    response
-                        .headers_mut()
-                        .insert("Idempotency-Key", key.parse().unwrap());
+                    set_idempotency_header(&mut response, key);
                 }
                 return response;
             } else {
@@ -116,9 +127,7 @@ pub async fn fql_handler_v1(
                 }
                 let mut response = (StatusCode::OK, Json(json_value)).into_response();
                 if let Some(ref key) = idempotency_key {
-                    response
-                        .headers_mut()
-                        .insert("Idempotency-Key", key.parse().unwrap());
+                    set_idempotency_header(&mut response, key);
                 }
                 response
             } else {
@@ -155,9 +164,7 @@ pub async fn fql_handler_v1(
                 }
                 let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(json_value)).into_response();
                 if let Some(ref key) = idempotency_key {
-                    response
-                        .headers_mut()
-                        .insert("Idempotency-Key", key.parse().unwrap());
+                    set_idempotency_header(&mut response, key);
                 }
                 response
             } else {
@@ -225,6 +232,15 @@ pub async fn batch_fql_handler(
             let count = stmts.len();
             all_stmts.extend(stmts.iter().cloned());
             stmt_boundaries.push((id.clone(), start_idx, count));
+        }
+
+        if all_stmts.len() > 1000 {
+            return (StatusCode::BAD_REQUEST, Json(BatchFqlResponse {
+                success: false,
+                results: vec![],
+                error: Some(format!("Total statement count ({}) exceeds maximum of 1000", all_stmts.len())),
+                metadata: FqlMetadataDto { statements_executed: 0, journals_created: 0 },
+            }));
         }
 
         match exec.execute_script(&mut context, &all_stmts) {

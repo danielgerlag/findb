@@ -122,14 +122,14 @@ peg::parser! {
             = year:$(num()*<4,4>) "-" month:$(num()*<2,2>) "-" day:$(num()*<2,2>) {? 
                 
                 let year = year.parse::<i32>().or(Err("invalid year")).unwrap();
-                let month = month.parse::<u8>().or(Err("invalid month")).unwrap();
-                let day = day.parse::<u8>().or(Err("invalid day")).unwrap();
+                let month = month.parse::<u8>().or(Err("invalid month"))?;
+                let day = day.parse::<u8>().or(Err("invalid day"))?;
 
                 if month > 12 || day > 31 {
                     return Err("invalid date");
                 }
-                let month = Month::try_from(month).or(Err("invalid month")).unwrap(); 
-                let result = Date::from_calendar_date(year, month, day).unwrap();
+                let month = Month::try_from(month).or(Err("invalid month"))?; 
+                let result = Date::from_calendar_date(year, month, day).or(Err("invalid date"))?;
                 
                 Ok(result)
             }

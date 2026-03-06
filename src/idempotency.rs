@@ -3,6 +3,18 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use serde_json::Value;
 
+/// Sentinel value used to mark an in-flight request (TOCTOU prevention).
+const PENDING_STATUS: u16 = 0;
+
+pub enum IdempotencyCheck {
+    /// Key was found with a completed response — return it.
+    Cached(Value, u16),
+    /// Key is already being processed by another request.
+    InFlight,
+    /// Key was not found — caller should proceed and call `set()` when done.
+    Proceed,
+}
+
 pub struct IdempotencyStore {
     entries: RwLock<HashMap<String, CachedEntry>>,
     ttl: Duration,
@@ -22,10 +34,36 @@ impl IdempotencyStore {
         }
     }
 
+    /// Atomically check for a cached result or claim the key.
+    /// Returns `Cached` if a completed response exists, `InFlight` if another
+    /// request is processing this key, or `Proceed` if the caller should execute.
+    pub fn check_or_claim(&self, key: &str) -> IdempotencyCheck {
+        let mut entries = self.entries.write().unwrap();
+        if let Some(entry) = entries.get(key) {
+            if entry.created_at.elapsed() < self.ttl {
+                if entry.status_code == PENDING_STATUS {
+                    return IdempotencyCheck::InFlight;
+                }
+                return IdempotencyCheck::Cached(entry.response.clone(), entry.status_code);
+            }
+            // Expired — fall through and reclaim
+        }
+        // Insert pending marker atomically
+        entries.insert(
+            key.to_string(),
+            CachedEntry {
+                response: Value::Null,
+                status_code: PENDING_STATUS,
+                created_at: Instant::now(),
+            },
+        );
+        IdempotencyCheck::Proceed
+    }
+
     pub fn get(&self, key: &str) -> Option<(Value, u16)> {
         let entries = self.entries.read().unwrap();
         entries.get(key).and_then(|entry| {
-            if entry.created_at.elapsed() < self.ttl {
+            if entry.created_at.elapsed() < self.ttl && entry.status_code != PENDING_STATUS {
                 Some((entry.response.clone(), entry.status_code))
             } else {
                 None
