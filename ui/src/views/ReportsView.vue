@@ -79,6 +79,12 @@
                   </template>
                 </Column>
               </DataTable>
+              <div class="retained-earnings-row" v-if="retainedEarnings !== 0">
+                <span>Retained Earnings</span>
+                <span :class="{ negative: retainedEarnings < 0 }">
+                  {{ formatMoney(retainedEarnings.toString()) }}
+                </span>
+              </div>
               <div class="subtotal-row">
                 <span>Total Equity</span>
                 <span>{{ formatMoney(totalEquity.toString()) }}</span>
@@ -202,7 +208,12 @@ const liabilities = computed(() => bsItems.value.filter(i => i.account_type === 
 const equityAccounts = computed(() => bsItems.value.filter(i => i.account_type === 'equity'))
 const totalAssets = computed(() => sumBalances(assets.value))
 const totalLiabilities = computed(() => sumBalances(liabilities.value))
-const totalEquity = computed(() => sumBalances(equityAccounts.value))
+const retainedEarnings = computed(() => {
+  const incomeTotal = sumBalances(bsItems.value.filter(i => i.account_type === 'income'))
+  const expenseTotal = sumBalances(bsItems.value.filter(i => i.account_type === 'expense'))
+  return incomeTotal - expenseTotal
+})
+const totalEquity = computed(() => sumBalances(equityAccounts.value) + retainedEarnings.value)
 const hasBalanceSheetData = computed(() => bsItems.value.length > 0)
 
 // Income Statement computed
@@ -288,6 +299,15 @@ watch([asOfDate, fromDate], () => fetchReport())
   font-weight: 700;
   border-top: 2px solid var(--border);
   color: var(--text);
+}
+
+.retained-earnings-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 1rem;
+  color: var(--text-muted);
+  font-style: italic;
+  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
 }
 
 .report-grand-total {
