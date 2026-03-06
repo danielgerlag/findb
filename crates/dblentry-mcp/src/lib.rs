@@ -11,6 +11,7 @@ use serde::Deserialize;
 const FQL_REFERENCE: &str = include_str!("../../../docs/ai/fql-reference.md");
 
 /// Result of executing a single FQL statement.
+#[derive(Debug)]
 pub struct FqlResult {
     pub output: String,
     pub journals_created: usize,
@@ -279,4 +280,65 @@ pub async fn run_mcp_stdio(
     let service = server.serve(rmcp::transport::io::stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockEngine;
+
+    impl FqlEngine for MockEngine {
+        fn execute_fql(&self, fql: &str, _entity: Option<&str>) -> Result<Vec<FqlResult>, String> {
+            if fql.contains("ERROR") {
+                return Err("Test error".to_string());
+            }
+            Ok(vec![FqlResult {
+                output: format!("Executed: {}", fql),
+                journals_created: 1,
+            }])
+        }
+    }
+
+    #[test]
+    fn test_fql_engine_success() {
+        let engine = MockEngine;
+        let result = engine.execute_fql("CREATE ACCOUNT @bank ASSET", None);
+        assert!(result.is_ok());
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].journals_created, 1);
+        assert!(results[0].output.contains("CREATE ACCOUNT"));
+    }
+
+    #[test]
+    fn test_fql_engine_error() {
+        let engine = MockEngine;
+        let result = engine.execute_fql("ERROR", None);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Test error");
+    }
+
+    #[test]
+    fn test_fql_engine_with_entity() {
+        let engine = MockEngine;
+        let result = engine.execute_fql("GET balance(@bank, 2024-01-01) AS b", Some("corp"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_fql_reference_included() {
+        assert!(!FQL_REFERENCE.is_empty());
+        assert!(FQL_REFERENCE.contains("CREATE ACCOUNT"));
+    }
+
+    #[test]
+    fn test_fql_result_fields() {
+        let result = FqlResult {
+            output: "test output".to_string(),
+            journals_created: 5,
+        };
+        assert_eq!(result.output, "test output");
+        assert_eq!(result.journals_created, 5);
+    }
 }

@@ -259,7 +259,7 @@ pub fn map_parse_error(error_str: &str) -> ApiErrorDto {
     }
 }
 
-fn levenshtein(a: &str, b: &str) -> usize {
+pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
     let a_len = a_bytes.len();
@@ -277,7 +277,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b_len]
 }
 
-fn find_closest_match(input: &str, candidates: &[&str]) -> Option<String> {
+pub(crate) fn find_closest_match(input: &str, candidates: &[&str]) -> Option<String> {
     let input_lower = input.to_lowercase();
     candidates
         .iter()
@@ -285,4 +285,186 @@ fn find_closest_match(input: &str, candidates: &[&str]) -> Option<String> {
         .filter(|(_, d)| *d <= 3)
         .min_by_key(|(_, d)| *d)
         .map(|(c, _)| format!("Did you mean '{}'?", c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evaluator::EvaluationError;
+    use dblentry_core::storage::StorageError;
+
+    #[test]
+    fn test_map_parse_error_with_location() {
+        let err = map_parse_error("expected statement at line 3, column 5");
+        assert_eq!(err.code, "PARSE_ERROR");
+        assert!(err.message.contains("Parse error"));
+        let details = err.details.unwrap();
+        assert_eq!(details.line, Some(3));
+        assert_eq!(details.column, Some(5));
+    }
+
+    #[test]
+    fn test_map_parse_error_without_location() {
+        let err = map_parse_error("unexpected end of input");
+        assert_eq!(err.code, "PARSE_ERROR");
+        assert!(err.details.is_none());
+    }
+
+    #[test]
+    fn test_map_evaluation_error_unknown_function_suggestion() {
+        let err = map_evaluation_error(&EvaluationError::UnknownFunction("balnce".to_string()));
+        assert_eq!(err.code, "UNKNOWN_FUNCTION");
+        let details = err.details.unwrap();
+        assert!(details.suggestion.is_some());
+        assert!(details.suggestion.unwrap().contains("balance"));
+    }
+
+    #[test]
+    fn test_map_evaluation_error_unknown_function_no_suggestion() {
+        let err = map_evaluation_error(&EvaluationError::UnknownFunction("zzzzzzz".to_string()));
+        assert_eq!(err.code, "UNKNOWN_FUNCTION");
+        let details = err.details.unwrap();
+        assert!(details.suggestion.is_none());
+    }
+
+    #[test]
+    fn test_map_evaluation_error_divide_by_zero() {
+        let err = map_evaluation_error(&EvaluationError::DivideByZero);
+        assert_eq!(err.code, "DIVIDE_BY_ZERO");
+    }
+
+    #[test]
+    fn test_map_evaluation_error_invalid_type() {
+        let err = map_evaluation_error(&EvaluationError::InvalidType);
+        assert_eq!(err.code, "TYPE_ERROR");
+    }
+
+    #[test]
+    fn test_map_evaluation_error_account_not_found() {
+        let err = map_evaluation_error(&EvaluationError::StorageError(StorageError::AccountNotFound("foo".to_string())));
+        assert_eq!(err.code, "ACCOUNT_NOT_FOUND");
+    }
+
+    #[test]
+    fn test_map_evaluation_error_entity_not_found() {
+        let err = map_evaluation_error(&EvaluationError::StorageError(StorageError::EntityNotFound("bar".to_string())));
+        assert_eq!(err.code, "ENTITY_NOT_FOUND");
+    }
+
+    #[test]
+    fn test_map_evaluation_error_invalid_argument() {
+        let err = map_evaluation_error(&EvaluationError::InvalidArgument("bad arg".to_string()));
+        assert_eq!(err.code, "INVALID_ARGUMENT");
+    }
+
+    #[test]
+    fn test_map_evaluation_error_invalid_argument_count() {
+        let err = map_evaluation_error(&EvaluationError::InvalidArgumentCount("expected 2, got 3".to_string()));
+        assert_eq!(err.code, "INVALID_ARGUMENT_COUNT");
+    }
+
+    #[test]
+    fn test_map_evaluation_error_no_rate_found() {
+        let err = map_evaluation_error(&EvaluationError::NoRateFound);
+        assert_eq!(err.code, "NO_RATE_FOUND");
+    }
+
+    #[test]
+    fn test_map_evaluation_error_general() {
+        let err = map_evaluation_error(&EvaluationError::General("something went wrong".to_string()));
+        assert_eq!(err.code, "GENERAL_ERROR");
+        assert!(err.message.contains("something went wrong"));
+    }
+
+    #[test]
+    fn test_map_evaluation_error_unknown_identifier() {
+        let err = map_evaluation_error(&EvaluationError::UnknownIdentifier("x".to_string()));
+        assert_eq!(err.code, "UNKNOWN_IDENTIFIER");
+    }
+
+    #[test]
+    fn test_map_storage_error_rate_not_found() {
+        let err = map_storage_error(&StorageError::RateNotFound("usd".to_string()));
+        assert_eq!(err.code, "RATE_NOT_FOUND");
+    }
+
+    #[test]
+    fn test_map_storage_error_no_active_transaction() {
+        let err = map_storage_error(&StorageError::NoActiveTransaction);
+        assert_eq!(err.code, "TRANSACTION_ERROR");
+    }
+
+    #[test]
+    fn test_map_storage_error_entity_already_exists() {
+        let err = map_storage_error(&StorageError::EntityAlreadyExists("dup".to_string()));
+        assert_eq!(err.code, "ENTITY_ALREADY_EXISTS");
+    }
+
+    #[test]
+    fn test_map_storage_error_no_rate_found() {
+        let err = map_storage_error(&StorageError::NoRateFound);
+        assert_eq!(err.code, "NO_RATE_FOUND");
+    }
+
+    #[test]
+    fn test_map_storage_error_other() {
+        let err = map_storage_error(&StorageError::Other("misc".to_string()));
+        assert_eq!(err.code, "STORAGE_ERROR");
+    }
+
+    #[test]
+    fn test_levenshtein_exact() {
+        assert_eq!(levenshtein("hello", "hello"), 0);
+    }
+
+    #[test]
+    fn test_levenshtein_one_off() {
+        assert_eq!(levenshtein("hello", "hallo"), 1);
+    }
+
+    #[test]
+    fn test_levenshtein_different() {
+        assert!(levenshtein("abc", "xyz") > 2);
+    }
+
+    #[test]
+    fn test_levenshtein_empty() {
+        assert_eq!(levenshtein("", "abc"), 3);
+        assert_eq!(levenshtein("abc", ""), 3);
+        assert_eq!(levenshtein("", ""), 0);
+    }
+
+    #[test]
+    fn test_find_closest_match_found() {
+        let result = find_closest_match("balnce", &["balance", "statement", "round"]);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("balance"));
+    }
+
+    #[test]
+    fn test_find_closest_match_not_found() {
+        let result = find_closest_match("zzzzzzz", &["balance", "statement", "round"]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_closest_match_empty_candidates() {
+        let result = find_closest_match("balance", &[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_error_response_structure() {
+        let err = ApiErrorDto {
+            code: "TEST".to_string(),
+            message: "test message".to_string(),
+            details: None,
+        };
+        let resp = error_response(err);
+        assert!(!resp.success);
+        assert!(resp.results.is_empty());
+        assert!(resp.error.is_some());
+        assert_eq!(resp.metadata.statements_executed, 0);
+        assert_eq!(resp.metadata.journals_created, 0);
+    }
 }

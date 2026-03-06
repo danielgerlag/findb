@@ -3331,3 +3331,129 @@ backend_test!(cross_trial_balance, |exec: &StatementExecutor, ctx: &mut Executio
     let results = execute_script(exec, ctx, "GET trial_balance(2024-12-31) AS tb");
     assert_trial_balance_balanced(&results[0].variables["tb"], "cross_trial_balance");
 });
+
+// ===== Schema Introspection Tests =====
+
+#[test]
+fn test_list_rates_memory() {
+    let storage: Arc<dyn dblentry::storage::StorageBackend> = Arc::new(InMemoryStorage::new());
+    assert!(storage.list_rates("default").is_empty());
+
+    let function_registry = FunctionRegistry::new();
+    register_functions(&function_registry, &storage);
+    let evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
+    let exec = StatementExecutor::new(evaluator, storage.clone());
+    let mut ctx = ExecutionContext::new(time::OffsetDateTime::now_utc().date(), QueryVariables::new());
+    execute_script(&exec, &mut ctx, "CREATE RATE usd_eur; CREATE RATE usd_gbp;");
+
+    let rates = storage.list_rates("default");
+    assert_eq!(rates.len(), 2);
+    let rate_names: Vec<String> = rates.iter().map(|r| r.to_string()).collect();
+    assert!(rate_names.contains(&"usd_eur".to_string()));
+    assert!(rate_names.contains(&"usd_gbp".to_string()));
+}
+
+#[test]
+fn test_list_rates_sqlite() {
+    use dblentry_sqlite::SqliteStorage;
+    let storage: Arc<dyn dblentry::storage::StorageBackend> = Arc::new(SqliteStorage::new(":memory:").unwrap());
+    let function_registry = FunctionRegistry::new();
+    register_functions(&function_registry, &storage);
+    let evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
+    let exec = StatementExecutor::new(evaluator, storage.clone());
+    let mut ctx = ExecutionContext::new(time::OffsetDateTime::now_utc().date(), QueryVariables::new());
+    // SQLite create_rate is a no-op; rows appear after SET RATE
+    execute_script(&exec, &mut ctx, "
+        CREATE RATE alpha; SET RATE alpha 1.0 2024-01-01;
+        CREATE RATE beta; SET RATE beta 2.0 2024-01-01;
+        CREATE RATE gamma; SET RATE gamma 3.0 2024-01-01;
+    ");
+
+    let rates = storage.list_rates("default");
+    assert_eq!(rates.len(), 3);
+}
+
+#[test]
+fn test_list_rates_empty_initially() {
+    let storage: Arc<dyn dblentry::storage::StorageBackend> = Arc::new(InMemoryStorage::new());
+    assert!(storage.list_rates("default").is_empty());
+}
+
+#[test]
+fn test_list_accounts_memory() {
+    let storage: Arc<dyn dblentry::storage::StorageBackend> = Arc::new(InMemoryStorage::new());
+    assert!(storage.list_accounts("default").is_empty());
+
+    let function_registry = FunctionRegistry::new();
+    register_functions(&function_registry, &storage);
+    let evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
+    let exec = StatementExecutor::new(evaluator, storage.clone());
+    let mut ctx = ExecutionContext::new(time::OffsetDateTime::now_utc().date(), QueryVariables::new());
+    execute_script(&exec, &mut ctx, "CREATE ACCOUNT @bank ASSET; CREATE ACCOUNT @equity EQUITY;");
+
+    let accounts = storage.list_accounts("default");
+    assert_eq!(accounts.len(), 2);
+    let names: Vec<String> = accounts.iter().map(|(id, _)| id.to_string()).collect();
+    assert!(names.contains(&"bank".to_string()));
+    assert!(names.contains(&"equity".to_string()));
+}
+
+#[test]
+fn test_list_functions() {
+    let registry = FunctionRegistry::new();
+    assert!(registry.list_functions().is_empty());
+
+    let storage: Arc<dyn dblentry::storage::StorageBackend> = Arc::new(InMemoryStorage::new());
+    register_functions(&registry, &storage);
+
+    let funcs = registry.list_functions();
+    assert_eq!(funcs.len(), 16);
+    // Verify sorted
+    let mut sorted = funcs.clone();
+    sorted.sort();
+    assert_eq!(funcs, sorted);
+    // Check specific functions exist
+    assert!(funcs.contains(&"balance".to_string()));
+    assert!(funcs.contains(&"trial_balance".to_string()));
+    assert!(funcs.contains(&"lots".to_string()));
+    assert!(funcs.contains(&"income_statement".to_string()));
+    assert!(funcs.contains(&"convert".to_string()));
+}
+
+// ===== Batch FQL Tests =====
+
+#[test]
+fn test_batch_transactional_success() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "CREATE ACCOUNT @cash ASSET; CREATE ACCOUNT @equity EQUITY;");
+    execute_script(&exec, &mut ctx, "CREATE JOURNAL 2024-01-01, 1000, 'Initial' DEBIT @cash 1000, CREDIT @equity 1000;");
+    let results = execute_script(&exec, &mut ctx, "GET balance(@cash, 2024-12-31) AS bal");
+    assert_eq!(results[0].variables["bal"], DataValue::Money(rust_decimal::Decimal::from(1000)));
+}
+
+#[test]
+fn test_batch_execute_script_rollback_on_error() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "CREATE ACCOUNT @cash ASSET; CREATE ACCOUNT @equity EQUITY;");
+
+    // execute_script wraps in a transaction — an error should roll back all changes
+    let script = "CREATE JOURNAL 2024-01-01, 500, 'Test' DEBIT @cash 500, CREDIT @equity 500; GET balance(@nonexistent, 2024-12-31) AS x;";
+    let statements = lexer::parse(script).unwrap();
+    let result = exec.execute_script(&mut ctx, &statements);
+    assert!(result.is_err());
+
+    // Cash should still be 0 (rolled back)
+    let mut fresh_ctx = ExecutionContext::new(ctx.effective_date, QueryVariables::new());
+    let results = execute_script(&exec, &mut fresh_ctx, "GET balance(@cash, 2024-12-31) AS bal");
+    assert_eq!(results[0].variables["bal"], DataValue::Money(rust_decimal::Decimal::ZERO));
+}
+
+#[test]
+fn test_batch_multiple_scripts_sequential() {
+    let (exec, mut ctx) = setup();
+    execute_script(&exec, &mut ctx, "CREATE ACCOUNT @bank ASSET; CREATE ACCOUNT @revenue INCOME; CREATE ACCOUNT @expenses EXPENSE;");
+    execute_script(&exec, &mut ctx, "CREATE JOURNAL 2024-01-15, 5000, 'Revenue' DEBIT @bank, CREDIT @revenue;");
+    execute_script(&exec, &mut ctx, "CREATE JOURNAL 2024-02-15, 1200, 'Expense' DEBIT @expenses, CREDIT @bank;");
+    let results = execute_script(&exec, &mut ctx, "GET balance(@bank, 2024-12-31) AS bal");
+    assert_eq!(results[0].variables["bal"], DataValue::Money(rust_decimal::Decimal::from(3800)));
+}

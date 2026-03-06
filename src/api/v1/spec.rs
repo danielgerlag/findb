@@ -52,3 +52,29 @@ pub async fn fql_spec_handler(
         ).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fql_reference_included() {
+        assert!(!FQL_REFERENCE_MD.is_empty());
+        assert!(FQL_REFERENCE_MD.contains("FQL"));
+        assert!(FQL_REFERENCE_MD.contains("CREATE ACCOUNT"));
+        assert!(FQL_REFERENCE_MD.contains("balance"));
+    }
+
+    #[test]
+    fn test_fql_spec_response_serializes() {
+        let resp = FqlSpecResponse {
+            version: "1.0",
+            language: "FQL",
+            description: "test",
+            reference: "test ref",
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"version\":\"1.0\""));
+        assert!(json.contains("\"language\":\"FQL\""));
+    }
+}
