@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 pub struct FqlResponseV1 {
@@ -95,4 +95,40 @@ pub struct LotItemDto {
 pub struct FqlMetadataDto {
     pub statements_executed: usize,
     pub journals_created: usize,
+}
+
+// --- Batch FQL types ---
+
+fn default_true() -> bool { true }
+
+#[derive(Deserialize)]
+pub struct BatchFqlRequest {
+    pub statements: Vec<BatchStatementEntry>,
+    #[serde(default = "default_true")]
+    pub transaction: bool,
+}
+
+#[derive(Deserialize)]
+pub struct BatchStatementEntry {
+    pub id: String,
+    pub fql: String,
+}
+
+#[derive(Serialize)]
+pub struct BatchFqlResponse {
+    pub success: bool,
+    pub results: Vec<BatchResultEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub metadata: FqlMetadataDto,
+}
+
+#[derive(Serialize)]
+pub struct BatchResultEntry {
+    pub id: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub data: Vec<ResultEntryDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }

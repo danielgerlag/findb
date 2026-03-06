@@ -7,6 +7,9 @@ use dblentry::auth::auth_middleware;
 use dblentry::config::{CliArgs, Config};
 use dblentry::functions::{Statement, TrialBalance};
 use dblentry::api::v1::handlers::fql_handler_v1;
+use dblentry::api::v1::schema::{SchemaState, schema_overview, schema_entity};
+use dblentry::api::v1::handlers::batch_fql_handler;
+use dblentry::api::v1::spec::fql_spec_handler;
 use dblentry::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max, Units, MarketValue, UnrealizedGain, CostBasis, Lots}, lexer};
 use dblentry_sqlite::SqliteStorage;
 use dblentry_postgres::PostgresStorage;
@@ -80,7 +83,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     function_registry.register_function("unrealized_gain", Function::Scalar(Arc::new(UnrealizedGain::new(storage.clone()))));
     function_registry.register_function("cost_basis", Function::Scalar(Arc::new(CostBasis::new(storage.clone()))));
     function_registry.register_function("lots", Function::Scalar(Arc::new(Lots::new(storage.clone()))));
-    let expression_evaluator = Arc::new(ExpressionEvaluator::new(Arc::new(function_registry), storage.clone()));
+    let function_registry = Arc::new(function_registry);
+    let expression_evaluator = Arc::new(ExpressionEvaluator::new(function_registry.clone(), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage.clone());
     let state = Arc::new(exec);
     let app_storage = storage.clone();
@@ -91,6 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protected = Router::new()
         .route("/fql", post(fql_handler))
         .route("/api/v1/fql", post(fql_handler_v1))
+        .route("/api/v1/fql/batch", post(batch_fql_handler))
+        .route("/api/v1/fql/spec", get(fql_spec_handler))
         .route("/api/accounts", post(rest_create_account).get(rest_list_accounts))
         .route("/api/accounts/:id/balance", get(rest_get_balance))
         .route("/api/accounts/:id/statement", get(rest_get_statement))
@@ -115,9 +121,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }))
         .route("/", post(fql_handler))
+        .route("/api/v1/schema", get(schema_overview))
+        .route("/api/v1/schema/entities/:entity_id", get(schema_entity))
         .with_state(state.clone())
         .layer(middleware::from_fn(auth_middleware))
-        .layer(Extension(auth_config));
+        .layer(Extension(auth_config))
+        .layer(Extension(SchemaState {
+            storage: storage.clone(),
+            function_registry: function_registry.clone(),
+        }));
 
     // Public routes (no auth)
     let public = Router::new()
