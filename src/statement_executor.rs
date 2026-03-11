@@ -191,7 +191,33 @@ impl StatementExecutor {
                 dimensions
             },
             ledger_entries: {
-                self.build_ledger_entries(&eval_ctx, &journal.operations, journal_amount)?
+                let entries = self.build_ledger_entries(&eval_ctx, &journal.operations, journal_amount)?;
+
+                // Validate that total debits == total credits when all operations have explicit amounts
+                let all_explicit = journal.operations.iter().all(|op| {
+                    match op {
+                        ast::LedgerOperation::Debit(d) => d.amount.is_some() || d.unit_spec.is_some(),
+                        ast::LedgerOperation::Credit(c) => c.amount.is_some() || c.unit_spec.is_some(),
+                    }
+                });
+
+                if all_explicit {
+                    let mut total_debits = Decimal::ZERO;
+                    let mut total_credits = Decimal::ZERO;
+                    for entry in &entries {
+                        match entry {
+                            LedgerEntryCommand::Debit { amount, .. } => total_debits += amount,
+                            LedgerEntryCommand::Credit { amount, .. } => total_credits += amount,
+                        }
+                    }
+                    if total_debits != total_credits {
+                        return Err(EvaluationError::General(
+                            format!("unbalanced journal: total debits ({}) != total credits ({})", total_debits, total_credits)
+                        ));
+                    }
+                }
+
+                entries
             },
         };
 

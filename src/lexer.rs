@@ -114,9 +114,13 @@ peg::parser! {
         rule boolean() -> bool
             = kw_true() { true } / kw_false() { false }
 
-        // e.g. 'hello world'
+        // e.g. 'hello world', 'O''Brien''s store'
         rule text() -> Arc<str>
-            = "'" text:$([^ '\'' | '\n' | '\r']*) "'" { Arc::from(text) }
+            = "'" parts:text_char()* "'" { Arc::from(parts.into_iter().collect::<String>()) }
+
+        rule text_char() -> char
+            = "''" { '\'' }
+            / c:$([^ '\'' | '\n' | '\r']) { c.chars().next().unwrap() }
 
         rule date() -> Date
             = year:$(num()*<4,4>) "-" month:$(num()*<2,2>) "-" day:$(num()*<2,2>) {? 

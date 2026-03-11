@@ -251,11 +251,14 @@ impl StorageBackend for SqliteStorage {
     fn create_account(&self, entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         let unit_rate_id = account.unit_rate_id.as_ref().map(|s| s.to_string());
-        conn.execute(
-            "INSERT OR REPLACE INTO accounts (id, account_type, unit_rate_id, entity_id) VALUES (?1, ?2, ?3, ?4)",
+        let rows = conn.execute(
+            "INSERT INTO accounts (id, account_type, unit_rate_id, entity_id) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
             params![account.id.as_ref(), account_type_to_str(&account.account_type), unit_rate_id, entity_id],
         )
         .map_err(|e| StorageError::Other(e.to_string()))?;
+        if rows == 0 {
+            return Err(StorageError::DuplicateAccount(account.id.to_string()));
+        }
         Ok(())
     }
 

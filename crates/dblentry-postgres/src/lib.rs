@@ -245,13 +245,16 @@ impl StorageBackend for PostgresStorage {
     fn create_account(&self, entity_id: &str, account: &AccountExpression) -> Result<(), StorageError> {
         let mut client = self.client.lock().unwrap();
         let unit_rate_id_opt = account.unit_rate_id.as_ref().map(|r| r.as_ref());
-        client
+        let rows = client
             .execute(
                 "INSERT INTO accounts (id, account_type, unit_rate_id, entity_id) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (entity_id, id) DO UPDATE SET account_type = $2, unit_rate_id = $3",
+                 ON CONFLICT (entity_id, id) DO NOTHING",
                 &[&account.id.as_ref(), &account_type_to_str(&account.account_type), &unit_rate_id_opt, &entity_id],
             )
             .map_err(|e| StorageError::Other(e.to_string()))?;
+        if rows == 0 {
+            return Err(StorageError::DuplicateAccount(account.id.to_string()));
+        }
         Ok(())
     }
 

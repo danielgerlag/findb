@@ -28,6 +28,8 @@ pub enum StorageError {
     EntityNotFound(String),
     #[error("entity already exists: {0}")]
     EntityAlreadyExists(String),
+    #[error("account already exists: {0}")]
+    DuplicateAccount(String),
 }
 
 pub type TransactionId = u64;

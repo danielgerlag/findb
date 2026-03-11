@@ -95,6 +95,9 @@ impl StorageBackend for InMemoryStorage {
         let mut entities = self.entities.write().unwrap();
         let entity = entities.get_mut(entity_id)
             .ok_or_else(|| StorageError::EntityNotFound(entity_id.to_string()))?;
+        if entity.ledger_accounts.contains_key(&account.id) {
+            return Err(StorageError::DuplicateAccount(account.id.to_string()));
+        }
         entity.ledger_accounts.insert(account.id.clone(), LedgerStore::new(account.account_type.clone()));
         if let Some(ref rate_id) = account.unit_rate_id {
             entity.lot_stores.insert(account.id.clone(), LotStoreData::new());
