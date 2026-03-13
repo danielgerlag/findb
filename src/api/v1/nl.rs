@@ -11,6 +11,7 @@ use std::sync::Arc;
 use axum::{extract::State, Extension};
 #[cfg(feature = "nl")]
 use crate::{
+    display::format_execution_result,
     config::NlConfig,
     evaluator::QueryVariables,
     lexer,
@@ -213,7 +214,7 @@ pub async fn nl_handler(
                         let mut total_journals = 0;
                         for r in &results {
                             total_journals += r.journals_created;
-                            let s = r.to_string();
+                            let s = format_execution_result(r);
                             if !s.trim().is_empty() {
                                 output.push_str(&s);
                                 output.push('\n');

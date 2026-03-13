@@ -48,14 +48,7 @@ impl ExecutionResult {
 
 impl Display for ExecutionResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut result = String::new();
-        for (key, value) in &self.variables {
-            result.push_str(&format!("{}: {}\n", key, value));
-        }
-        if self.journals_created > 0 {
-            result.push_str(&format!("journals_created: {}", self.journals_created));
-        }
-        f.write_str(&result)
+        f.write_str(&crate::display::format_execution_result(self))
     }
 }
 
@@ -76,6 +69,10 @@ impl StatementExecutor {
             expression_evaluator,
             storage,
         }
+    }
+
+    pub fn list_entities(&self) -> Vec<Arc<str>> {
+        self.storage.list_entities()
     }
 
     pub fn execute(&self, context: &mut ExecutionContext, statement: &Statement) -> Result<ExecutionResult, EvaluationError> {

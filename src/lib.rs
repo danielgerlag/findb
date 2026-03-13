@@ -2,6 +2,7 @@ pub mod api;
 pub mod ast;
 pub mod auth;
 pub mod config;
+pub mod display;
 pub mod grpc;
 pub mod idempotency;
 pub mod lexer;

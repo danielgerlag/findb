@@ -18,7 +18,6 @@ use dblentry_core::{
     CreateJournalCommand, CreateRateCommand, LedgerEntryCommand, SetRateCommand,
     DataValue, StatementTxn,
     StorageBackend, StorageError, TransactionId,
-    escape_like,
 };
 
 pub struct PostgresStorage {
@@ -30,7 +29,7 @@ pub struct PostgresStorage {
 impl PostgresStorage {
     pub fn new(connection_string: &str) -> Result<Self, StorageError> {
         let client = Client::connect(connection_string, NoTls)
-            .map_err(|e| StorageError::Other(format!("PostgreSQL connection failed: {}", e)))?;
+            .map_err(|e| StorageError::DatabaseError(format!("PostgreSQL connection failed: {}", e)))?;
 
         let storage = Self {
             client: Mutex::new(client),
@@ -142,7 +141,7 @@ impl PostgresStorage {
             CREATE INDEX IF NOT EXISTS idx_pg_lot_dims ON lot_dimensions(lot_id, dimension_key, dimension_value);
             ",
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -152,10 +151,10 @@ impl PostgresStorage {
                 "UPDATE sequence_counter SET value = value + 1 WHERE id = 1",
                 &[],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         let row = client
             .query_one("SELECT value FROM sequence_counter WHERE id = 1", &[])
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         let seq: i64 = row.get(0);
         Ok(seq as u64)
     }
@@ -194,14 +193,36 @@ fn str_to_account_type(s: &str) -> AccountType {
     }
 }
 
+fn escape_like(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '%' | '_' | '\\' => {
+                result.push('\\');
+                result.push(c);
+            }
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 fn data_value_to_str(dv: &DataValue) -> String {
     match dv {
-        DataValue::String(s) => s.to_string(),
+        DataValue::Null => "null".to_string(),
+        DataValue::Bool(b) => b.to_string(),
         DataValue::Int(i) => i.to_string(),
         DataValue::Money(m) => m.to_string(),
-        DataValue::Bool(b) => b.to_string(),
+        DataValue::Percentage(p) => p.to_string(),
+        DataValue::String(s) => s.to_string(),
         DataValue::Date(d) => date_to_str(*d),
-        _ => format!("{}", dv),
+        DataValue::List(items) => format!("{:?}", items),
+        DataValue::Map(map) => format!("{:?}", map),
+        DataValue::AccountId(id) => id.to_string(),
+        DataValue::Dimension((name, value)) => format!("{}={}", name, data_value_to_str(value)),
+        DataValue::Statement(stmt) => format!("{:?}", stmt),
+        DataValue::TrialBalance(items) => format!("{:?}", items),
+        DataValue::Lots(lots) => format!("{:?}", lots),
     }
 }
 
@@ -213,7 +234,7 @@ impl StorageBackend for PostgresStorage {
                 "INSERT INTO entities (id) VALUES ($1) ON CONFLICT (id) DO NOTHING",
                 &[&entity_id],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -251,7 +272,7 @@ impl StorageBackend for PostgresStorage {
                  ON CONFLICT (entity_id, id) DO NOTHING",
                 &[&account.id.as_ref(), &account_type_to_str(&account.account_type), &unit_rate_id_opt, &entity_id],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         if rows == 0 {
             return Err(StorageError::DuplicateAccount(account.id.to_string()));
         }
@@ -273,7 +294,7 @@ impl StorageBackend for PostgresStorage {
                  ON CONFLICT (entity_id, id, date) DO UPDATE SET value = $3",
                 &[&command.id.as_ref(), &date_str, &val_str, &entity_id],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -288,10 +309,10 @@ impl StorageBackend for PostgresStorage {
             Ok(Some(row)) => {
                 let val: String = row.get(0);
                 Decimal::from_str(&val)
-                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))
+                    .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))
             }
             Ok(None) => Err(StorageError::NoRateFound),
-            Err(e) => Err(StorageError::Other(e.to_string())),
+            Err(e) => Err(StorageError::DatabaseError(e.to_string())),
         }
     }
 
@@ -318,7 +339,7 @@ impl StorageBackend for PostgresStorage {
                     &entity_id,
                 ],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
         for (k, v) in &command.dimensions {
             let dim_val = data_value_to_str(v);
@@ -328,7 +349,7 @@ impl StorageBackend for PostgresStorage {
                      VALUES ($1, $2, $3)",
                     &[&jid, &k.as_ref(), &dim_val],
                 )
-                .map_err(|e| StorageError::Other(e.to_string()))?;
+                .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         }
 
         for entry in &command.ledger_entries {
@@ -350,7 +371,7 @@ impl StorageBackend for PostgresStorage {
                     "SELECT account_type FROM accounts WHERE entity_id = $1 AND id = $2",
                     &[&entity_id, &account_id.as_ref()],
                 )
-                .map_err(|e| StorageError::Other(e.to_string()))?
+                .map_err(|e| StorageError::DatabaseError(e.to_string()))?
                 .ok_or_else(|| StorageError::AccountNotFound(account_id.to_string()))?;
 
             let acct_type_str: String = row.get(0);
@@ -367,7 +388,7 @@ impl StorageBackend for PostgresStorage {
                      VALUES ($1, $2, $3, $4, $5) RETURNING id",
                     &[&jid, &account_id.as_ref(), &date_str, &amount_str, &entity_id],
                 )
-                .map_err(|e| StorageError::Other(e.to_string()))?;
+                .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
             let le_id: i64 = le_row.get(0);
 
@@ -379,7 +400,7 @@ impl StorageBackend for PostgresStorage {
                          VALUES ($1, $2, $3)",
                         &[&le_id, &k.as_ref(), &dim_val],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
             }
 
             // Handle lot creation for debits with units
@@ -389,7 +410,7 @@ impl StorageBackend for PostgresStorage {
                         "SELECT unit_rate_id FROM accounts WHERE entity_id = $1 AND id = $2",
                         &[&entity_id, &account_id.as_ref()],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
                 let unit_rate_id: Option<String> = unit_rate_row.and_then(|row| row.get(0));
 
@@ -407,7 +428,7 @@ impl StorageBackend for PostgresStorage {
                              VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
                             &[&account_id.as_ref(), &date_str, &units_str, &cpu_str, &jid, &entity_id],
                         )
-                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                        .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
                     let lot_id: i64 = lot_row.get(0);
                     for (k, v) in &command.dimensions {
@@ -418,7 +439,7 @@ impl StorageBackend for PostgresStorage {
                                  VALUES ($1, $2, $3)",
                                 &[&lot_id, &k.as_ref(), &dim_val],
                             )
-                            .map_err(|e| StorageError::Other(e.to_string()))?;
+                            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                     }
                 }
             }
@@ -430,7 +451,7 @@ impl StorageBackend for PostgresStorage {
                         "SELECT unit_rate_id FROM accounts WHERE entity_id = $1 AND id = $2",
                         &[&entity_id, &account_id.as_ref()],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
                 let unit_rate_id: Option<String> = unit_rate_row.and_then(|row| row.get(0));
 
@@ -443,7 +464,7 @@ impl StorageBackend for PostgresStorage {
                              ORDER BY date ASC, id ASC",
                             &[&entity_id, &account_id.as_ref()],
                         )
-                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                        .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
                     for lot_row in &lot_rows {
                         if remaining.is_zero() {
@@ -452,7 +473,7 @@ impl StorageBackend for PostgresStorage {
                         let lot_id: i64 = lot_row.get(0);
                         let units_str: String = lot_row.get(1);
                         let lot_units = Decimal::from_str(&units_str)
-                            .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                            .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
                         if lot_units <= remaining {
                             remaining -= lot_units;
                             client
@@ -460,7 +481,7 @@ impl StorageBackend for PostgresStorage {
                                     "UPDATE lots SET units_remaining = '0' WHERE id = $1",
                                     &[&lot_id],
                                 )
-                                .map_err(|e| StorageError::Other(e.to_string()))?;
+                                .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                         } else {
                             let new_remaining = (lot_units - remaining).to_string();
                             remaining = Decimal::ZERO;
@@ -469,7 +490,7 @@ impl StorageBackend for PostgresStorage {
                                     "UPDATE lots SET units_remaining = $1 WHERE id = $2",
                                     &[&new_remaining, &lot_id],
                                 )
-                                .map_err(|e| StorageError::Other(e.to_string()))?;
+                                .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                         }
                     }
                 }
@@ -494,7 +515,7 @@ impl StorageBackend for PostgresStorage {
                 "SELECT COUNT(*) > 0 FROM accounts WHERE entity_id = $1 AND id = $2",
                 &[&entity_id, &account_id],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         let acct_exists: bool = exists.get(0);
         if !acct_exists {
             return Err(StorageError::AccountNotFound(account_id.to_string()));
@@ -516,7 +537,7 @@ impl StorageBackend for PostgresStorage {
                            AND (led.dimension_value = $5 OR led.dimension_value LIKE $6 || '/%' ESCAPE '\\')",
                         &[&entity_id, &account_id, &date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 row.get(0)
             }
             None => {
@@ -527,13 +548,13 @@ impl StorageBackend for PostgresStorage {
                          WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date <= $3",
                         &[&entity_id, &account_id, &date_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 row.get(0)
             }
         };
 
         Decimal::from_str(&total_str)
-            .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))
+            .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))
     }
 
     fn get_statement(
@@ -552,7 +573,7 @@ impl StorageBackend for PostgresStorage {
                 "SELECT COUNT(*) > 0 FROM accounts WHERE entity_id = $1 AND id = $2",
                 &[&entity_id, &account_id],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         let acct_exists: bool = exists.get(0);
         if !acct_exists {
             return Err(StorageError::AccountNotFound(account_id.to_string()));
@@ -591,7 +612,7 @@ impl StorageBackend for PostgresStorage {
                            AND (led.dimension_value = $5 OR led.dimension_value LIKE $6 || '/%' ESCAPE '\\')",
                         &[&entity_id, &account_id, &balance_date_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 row.get(0)
             }
             None => {
@@ -602,7 +623,7 @@ impl StorageBackend for PostgresStorage {
                          WHERE le.entity_id = $1 AND le.account_id = $2 AND le.date <= $3",
                         &[&entity_id, &account_id, &balance_date_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 row.get(0)
             }
         };
@@ -641,11 +662,11 @@ impl StorageBackend for PostgresStorage {
                         &query,
                         &[&entity_id, &account_id, &from_str, &to_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?
             }
             None => client
                 .query(&query, &[&entity_id, &account_id, &from_str, &to_str])
-                .map_err(|e| StorageError::Other(e.to_string()))?,
+                .map_err(|e| StorageError::DatabaseError(e.to_string()))?,
         };
 
         let mut result = Vec::new();
@@ -697,7 +718,7 @@ impl StorageBackend for PostgresStorage {
                     &date_to_str(to),
                 ],
             )
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
 
         let mut result = HashSet::new();
         for row in rows {
@@ -740,7 +761,7 @@ impl StorageBackend for PostgresStorage {
         let mut client = self.client.lock().unwrap();
         client
             .batch_execute("SAVEPOINT dblentry_tx")
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         let tx_id = self.tx_counter.fetch_add(1, Ordering::SeqCst);
         *self.active_tx.lock().unwrap() = Some(tx_id);
         tracing::debug!(tx_id, "PostgreSQL transaction started");
@@ -755,7 +776,7 @@ impl StorageBackend for PostgresStorage {
         let mut client = self.client.lock().unwrap();
         client
             .batch_execute("RELEASE SAVEPOINT dblentry_tx")
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         *active = None;
         tracing::debug!(tx_id, "PostgreSQL transaction committed");
         Ok(())
@@ -769,7 +790,7 @@ impl StorageBackend for PostgresStorage {
         let mut client = self.client.lock().unwrap();
         client
             .batch_execute("ROLLBACK TO SAVEPOINT dblentry_tx")
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
         *active = None;
         tracing::debug!(tx_id, "PostgreSQL transaction rolled back");
         Ok(())
@@ -794,7 +815,7 @@ impl StorageBackend for PostgresStorage {
                          ORDER BY l.date ASC",
                         &[&entity_id, &account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 rows.iter()
                     .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
                     .collect()
@@ -807,7 +828,7 @@ impl StorageBackend for PostgresStorage {
                          ORDER BY l.date ASC",
                         &[&entity_id, &account_id],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 rows.iter()
                     .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
                     .collect()
@@ -817,9 +838,9 @@ impl StorageBackend for PostgresStorage {
         let mut result = Vec::new();
         for (lot_id, date_str, units_str, cpu_str) in lot_rows {
             let units = Decimal::from_str(&units_str)
-                .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
             let cost_per_unit = Decimal::from_str(&cpu_str)
-                .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
 
             // Fetch dimensions for this lot
             let mut dims = BTreeMap::new();
@@ -828,7 +849,7 @@ impl StorageBackend for PostgresStorage {
                     "SELECT dimension_key, dimension_value FROM lot_dimensions WHERE lot_id = $1",
                     &[&lot_id],
                 )
-                .map_err(|e| StorageError::Other(e.to_string()))?;
+                .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
             for dim_row in &dim_rows {
                 let k: String = dim_row.get(0);
                 let v: String = dim_row.get(1);
@@ -865,7 +886,7 @@ impl StorageBackend for PostgresStorage {
                            )",
                         &[&entity_id, &account_id, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 row.get(0)
             }
             None => {
@@ -875,13 +896,13 @@ impl StorageBackend for PostgresStorage {
                          WHERE l.entity_id = $1 AND l.account_id = $2 AND l.units_remaining::NUMERIC > 0",
                         &[&entity_id, &account_id],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 row.get(0)
             }
         };
 
         Decimal::from_str(&total_str)
-            .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))
+            .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))
     }
 
     fn deplete_lots(&self, entity_id: &str, account_id: &str, units: Decimal, method: &CostMethod, dimensions: &BTreeMap<Arc<str>, Arc<DataValue>>) -> Result<Decimal, StorageError> {
@@ -902,7 +923,7 @@ impl StorageBackend for PostgresStorage {
             );
             let rows = client
                 .query(&query, &[&entity_id, &account_id])
-                .map_err(|e| StorageError::Other(e.to_string()))?;
+                .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
             rows.iter()
                 .map(|r| (r.get(0), r.get(1), r.get(2)))
                 .collect()
@@ -940,7 +961,7 @@ impl StorageBackend for PostgresStorage {
 
             let rows = client
                 .query(&query, &param_refs)
-                .map_err(|e| StorageError::Other(e.to_string()))?;
+                .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
             rows.iter()
                 .map(|r| (r.get(0), r.get(1), r.get(2)))
                 .collect()
@@ -952,9 +973,9 @@ impl StorageBackend for PostgresStorage {
             let mut total_cost = Decimal::ZERO;
             for (_, units_str, cpu_str) in &lot_rows {
                 let lot_units = Decimal::from_str(units_str)
-                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                    .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
                 let cpu = Decimal::from_str(cpu_str)
-                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                    .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
                 total_units += lot_units;
                 total_cost += lot_units * cpu;
             }
@@ -972,7 +993,7 @@ impl StorageBackend for PostgresStorage {
                     break;
                 }
                 let lot_units = Decimal::from_str(units_str)
-                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                    .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
                 if lot_units <= remaining {
                     remaining -= lot_units;
                     cost_basis += lot_units * avg_cost;
@@ -981,7 +1002,7 @@ impl StorageBackend for PostgresStorage {
                             "UPDATE lots SET units_remaining = '0' WHERE id = $1",
                             &[lot_id],
                         )
-                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                        .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 } else {
                     cost_basis += remaining * avg_cost;
                     let new_remaining = (lot_units - remaining).to_string();
@@ -991,7 +1012,7 @@ impl StorageBackend for PostgresStorage {
                             "UPDATE lots SET units_remaining = $1 WHERE id = $2",
                             &[&new_remaining, lot_id],
                         )
-                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                        .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 }
             }
 
@@ -1006,9 +1027,9 @@ impl StorageBackend for PostgresStorage {
                     break;
                 }
                 let lot_units = Decimal::from_str(units_str)
-                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                    .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
                 let cpu = Decimal::from_str(cpu_str)
-                    .map_err(|e| StorageError::Other(format!("Invalid decimal: {}", e)))?;
+                    .map_err(|e| StorageError::DatabaseError(format!("Invalid decimal: {}", e)))?;
                 if lot_units <= remaining {
                     remaining -= lot_units;
                     cost_basis += lot_units * cpu;
@@ -1017,7 +1038,7 @@ impl StorageBackend for PostgresStorage {
                             "UPDATE lots SET units_remaining = '0' WHERE id = $1",
                             &[lot_id],
                         )
-                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                        .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 } else {
                     cost_basis += remaining * cpu;
                     let new_remaining = (lot_units - remaining).to_string();
@@ -1027,7 +1048,7 @@ impl StorageBackend for PostgresStorage {
                             "UPDATE lots SET units_remaining = $1 WHERE id = $2",
                             &[&new_remaining, lot_id],
                         )
-                        .map_err(|e| StorageError::Other(e.to_string()))?;
+                        .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
                 }
             }
 
@@ -1056,7 +1077,7 @@ impl StorageBackend for PostgresStorage {
                            )",
                         &[&entity_id, &account_id, &ratio_str, &dim_key.as_ref(), &dim_val_str, &escaped_dim_val_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
             }
             None => {
                 client
@@ -1067,7 +1088,7 @@ impl StorageBackend for PostgresStorage {
                          WHERE entity_id = $1 AND account_id = $2 AND units_remaining::NUMERIC > 0",
                         &[&entity_id, &account_id, &ratio_str],
                     )
-                    .map_err(|e| StorageError::Other(e.to_string()))?;
+                    .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
             }
         }
 

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::{
+    display::{format_data_value, format_execution_result},
     evaluator::QueryVariables,
     lexer,
     models::DataValue,
@@ -96,7 +97,7 @@ impl DblEntry for DblEntryService {
                 let mut total_journals = 0i32;
                 for result in &script_results {
                     total_journals += result.journals_created as i32;
-                    let result_str = result.to_string();
+                    let result_str = format_execution_result(result);
                     if !result_str.trim().is_empty() {
                         results.push(result_str);
                     }
@@ -193,7 +194,7 @@ impl DblEntry for DblEntryService {
             .and_then(|r| r.variables.get("result"))
             .map(|v| match v {
                 DataValue::Money(m) => m.to_string(),
-                other => format!("{}", other),
+                other => format_data_value(other),
             })
             .unwrap_or_else(|| "0".to_string());
 

@@ -1,6 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, fmt::Display};
-
-use prettytable::{Table, row};
+use std::{collections::BTreeMap, sync::Arc};
 use rust_decimal::Decimal;
 use time::Date;
 
@@ -70,66 +68,6 @@ pub enum DataValue {
 impl DataValue {
     pub fn is_null(&self) -> bool {
         matches!(self, DataValue::Null)
-    }
-}
-
-impl Display for DataValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let result: String = match self {
-            DataValue::Null => "null".to_string(),
-            DataValue::Bool(b) => if *b { "true".to_string() } else { "false".to_string() },
-            DataValue::Int(i) => i.to_string(),
-            DataValue::Money(m) => m.to_string(),
-            DataValue::Percentage(p) => p.to_string(),
-            DataValue::String(s) => s.to_string(),
-            DataValue::Date(d) => d.to_string(),
-            DataValue::List(l) => format!("{:?}", l),
-            DataValue::Map(m) => format!("{:?}", m),
-            DataValue::AccountId(id) => id.to_string(),
-            DataValue::Dimension((name, value)) => format!("{}={}", name, value),
-            DataValue::Statement(stmt) => {
-                let mut table = Table::new();
-                table.add_row(row!["Date", "Description", "Amount", "Balance"]);
-                table.add_empty_row();
-
-                for item in stmt {
-                    table.add_row(row![item.date, item.description, item.amount, item.balance]);
-                }
-
-                format!("\n{}\n", table)
-            },
-            DataValue::TrialBalance(tb) => {
-                let mut table = Table::new();
-                table.add_row(row!["Account", "Debit", "Credit"]);
-                table.add_empty_row();
-
-                for item in tb {
-                    match item.account_type {
-                        AccountType::Asset | AccountType::Expense => {
-                            table.add_row(row![item.account_id, item.balance, ""]);
-                        },
-                        AccountType::Liability | AccountType::Equity | AccountType::Income => {
-                            table.add_row(row![item.account_id, "", item.balance]);
-                        },
-                    }
-                }
-
-                format!("\n{}\n", table)
-            },
-            DataValue::Lots(lots) => {
-                let mut table = Table::new();
-                table.add_row(row!["Date", "Units", "Cost/Unit", "Total Cost"]);
-                table.add_empty_row();
-
-                for lot in lots {
-                    table.add_row(row![lot.date, lot.units, lot.cost_per_unit, lot.total_cost]);
-                }
-
-                format!("\n{}\n", table)
-            },
-        };
-        
-        f.write_str(&result)
     }
 }
 

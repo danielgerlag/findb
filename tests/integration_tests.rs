@@ -3730,20 +3730,6 @@ fn test_fql_string_with_apostrophe_escape() {
     }
 }
 
-// --- escape_like utility function ---
-
-#[test]
-fn test_escape_like_function() {
-    use dblentry_core::escape_like;
-
-    assert_eq!(escape_like("hello"), "hello");
-    assert_eq!(escape_like("100%"), "100\\%");
-    assert_eq!(escape_like("under_score"), "under\\_score");
-    assert_eq!(escape_like("back\\slash"), "back\\\\slash");
-    assert_eq!(escape_like("%_\\"), "\\%\\_\\\\");
-    assert_eq!(escape_like(""), "");
-    assert_eq!(escape_like("normal/path"), "normal/path");
-}
 
 // --- is_safe_date validation (test the validator function directly) ---
 

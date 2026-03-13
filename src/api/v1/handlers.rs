@@ -10,6 +10,7 @@ use metrics::{counter, histogram};
 
 use crate::{
     api::{TextFqlResponse, TextFqlMetadata},
+    display::format_execution_result,
     evaluator::QueryVariables,
     idempotency::{IdempotencyStore, IdempotencyCheck},
     lexer,
@@ -133,7 +134,7 @@ pub async fn fql_handler_v1(
             } else {
                 let mut results = Vec::new();
                 for result in &script_results {
-                    let result_str = result.to_string();
+                    let result_str = format_execution_result(result);
                     if !result_str.trim().is_empty() {
                         results.push(result_str);
                     }

@@ -1,6 +1,7 @@
-use dblentry_core::models::{AccountType, DataValue, StatementTxn, TrialBalanceItem};
+use dblentry_core::models::{AccountType, DataValue, LotItem, StatementTxn, TrialBalanceItem};
 use dblentry_core::storage::StorageError;
 
+use crate::display::format_data_value;
 use crate::evaluator::EvaluationError;
 use crate::statement_executor::ExecutionResult;
 
@@ -102,14 +103,14 @@ fn map_statement_txn(txn: &StatementTxn) -> StatementTxnDto {
     }
 }
 
-fn map_lot_item(lot: &dblentry_core::models::LotItem) -> LotItemDto {
+fn map_lot_item(lot: &LotItem) -> LotItemDto {
     LotItemDto {
         date: lot.date.to_string(),
         units: lot.units.to_string(),
         cost_per_unit: lot.cost_per_unit.to_string(),
         total_cost: lot.total_cost.to_string(),
         dimensions: lot.dimensions.iter()
-            .map(|(k, v)| (k.to_string(), format!("{}", v)))
+            .map(|(k, v)| (k.to_string(), format_data_value(v)))
             .collect(),
     }
 }
@@ -218,6 +219,11 @@ pub fn map_storage_error(e: &StorageError) -> ApiErrorDto {
         StorageError::NoRateFound => ApiErrorDto {
             code: "NO_RATE_FOUND".to_string(),
             message: e.to_string(),
+            details: None,
+        },
+        StorageError::DatabaseError(_) => ApiErrorDto {
+            code: "STORAGE_ERROR".to_string(),
+            message: "Internal storage error".to_string(),
             details: None,
         },
         _ => ApiErrorDto {
@@ -404,6 +410,13 @@ mod tests {
     fn test_map_storage_error_no_rate_found() {
         let err = map_storage_error(&StorageError::NoRateFound);
         assert_eq!(err.code, "NO_RATE_FOUND");
+    }
+
+    #[test]
+    fn test_map_storage_error_database_error() {
+        let err = map_storage_error(&StorageError::DatabaseError("db exploded".to_string()));
+        assert_eq!(err.code, "STORAGE_ERROR");
+        assert_eq!(err.message, "Internal storage error");
     }
 
     #[test]

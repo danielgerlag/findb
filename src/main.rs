@@ -12,7 +12,7 @@ use dblentry::api::v1::handlers::batch_fql_handler;
 use dblentry::api::v1::spec::fql_spec_handler;
 use dblentry::api::v1::nl::{nl_handler, NlState};
 use dblentry::idempotency::IdempotencyStore;
-use dblentry::{statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max, Units, MarketValue, UnrealizedGain, CostBasis, Lots}, lexer};
+use dblentry::{display::format_execution_result, statement_executor::{StatementExecutor, ExecutionContext}, storage::{InMemoryStorage, StorageBackend}, evaluator::{ExpressionEvaluator, QueryVariables}, function_registry::{FunctionRegistry, Function}, functions::{Balance, IncomeStatement, AccountCount, Convert, FxRate, Round, Abs, Min, Max, Units, MarketValue, UnrealizedGain, CostBasis, Lots}, lexer};
 use dblentry_sqlite::SqliteStorage;
 use dblentry_postgres::PostgresStorage;
 use metrics::{counter, histogram};
@@ -45,7 +45,7 @@ impl dblentry_mcp::FqlEngine for DblEntryFqlEngine {
                 results
                     .iter()
                     .map(|r| dblentry_mcp::FqlResult {
-                        output: r.to_string(),
+                        output: format_execution_result(r),
                         journals_created: r.journals_created,
                     })
                     .collect()
@@ -116,7 +116,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let expression_evaluator = Arc::new(ExpressionEvaluator::new(function_registry.clone(), storage.clone()));
     let exec = StatementExecutor::new(expression_evaluator, storage.clone());
     let state = Arc::new(exec);
-    let app_storage = storage.clone();
     
     if cli.mcp {
         tracing::info!("Starting DblEntry MCP server over stdio");
@@ -151,22 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/rates/:id", post(rest_set_rate))
         .route("/api/journals", post(rest_create_journal))
         .route("/api/trial-balance", get(rest_trial_balance))
-        .route("/api/entities", get({
-            let s = app_storage.clone();
-            move || {
-                let entities: Vec<String> = s.list_entities().iter().map(|e| e.to_string()).collect();
-                std::future::ready(Json(entities))
-            }
-        }).post({
-            let s = app_storage.clone();
-            move |Json(req): Json<CreateEntityRestRequest>| {
-                let result = s.create_entity(&req.name);
-                std::future::ready(match result {
-                    Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({"success": true}))),
-                    Err(e) => (StatusCode::CONFLICT, Json(serde_json::json!({"success": false, "error": e.to_string()}))),
-                })
-            }
-        }))
+        .route("/api/entities", get(rest_list_entities).post(rest_create_entity))
         .route("/", post(fql_handler))
         .route("/api/v1/schema", get(schema_overview))
         .route("/api/v1/schema/entities/:entity_id", get(schema_entity))
@@ -271,7 +255,7 @@ async fn fql_handler(
             let mut total_journals = 0usize;
             for result in &script_results {
                 total_journals += result.journals_created;
-                let result_str = result.to_string();
+                let result_str = format_execution_result(result);
                 if !result_str.trim().is_empty() {
                     results.push(result_str);
                 }
@@ -442,6 +426,25 @@ async fn rest_list_accounts(
     execute_fql_rest(&exec, fql).await
 }
 
+async fn rest_list_entities(
+    State(exec): State<Arc<StatementExecutor>>,
+) -> Json<Vec<String>> {
+    let entities = exec
+        .list_entities()
+        .iter()
+        .map(|entity| entity.to_string())
+        .collect();
+    Json(entities)
+}
+
+async fn rest_create_entity(
+    State(exec): State<Arc<StatementExecutor>>,
+    Json(req): Json<CreateEntityRestRequest>,
+) -> impl IntoResponse {
+    let fql = format!("CREATE ENTITY '{}'", escape_fql(&req.name));
+    execute_fql_rest(&exec, &fql).await
+}
+
 async fn rest_create_rate(
     State(exec): State<Arc<StatementExecutor>>,
     Json(req): Json<CreateRateRequest>,
@@ -591,7 +594,7 @@ async fn execute_fql_rest(
     for statement in &statements {
         match exec.execute(&mut context, statement) {
             Ok(result) => {
-                let s = result.to_string();
+                let s = format_execution_result(&result);
                 if !s.trim().is_empty() {
                     output.push_str(&s);
                 }

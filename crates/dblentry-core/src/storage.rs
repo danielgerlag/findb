@@ -14,6 +14,8 @@ use thiserror::Error;
 pub enum StorageError {
     #[error("IO error: {0}")]
     IOError(#[from] std::io::Error),
+    #[error("database error: {0}")]
+    DatabaseError(String),
     #[error("{0}")]
     Other(String),
     #[error("no rate found for the given date")]
