@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/dblentry-core",
+    "crates/dblentry-memory",
     "crates/dblentry-sqlite",
     "crates/dblentry-postgres",
     "crates/dblentry-mcp",
@@ -18,6 +19,7 @@ nl = ["reqwest"]
 [dependencies]
 reqwest = { version = "0.11", features = ["json", "rustls-tls"], optional = true }
 dblentry-core = { path = "crates/dblentry-core" }
+dblentry-memory = { path = "crates/dblentry-memory" }
 dblentry-sqlite = { path = "crates/dblentry-sqlite" }
 dblentry-postgres = { path = "crates/dblentry-postgres" }
 dblentry-mcp = { path = "crates/dblentry-mcp" }

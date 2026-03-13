@@ -588,6 +588,7 @@ dependencies = [
  "criterion",
  "dblentry-core",
  "dblentry-mcp",
+ "dblentry-memory",
  "dblentry-postgres",
  "dblentry-sqlite",
  "metrics",
@@ -634,6 +635,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "dblentry-memory"
+version = "0.1.0"
+dependencies = [
+ "dblentry-core",
+ "rust_decimal",
+ "time",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

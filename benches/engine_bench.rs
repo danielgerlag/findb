@@ -6,7 +6,8 @@ use dblentry::function_registry::{Function, FunctionRegistry};
 use dblentry::functions::{Balance, Statement, TrialBalance};
 use dblentry::lexer;
 use dblentry::statement_executor::{ExecutionContext, StatementExecutor};
-use dblentry::storage::{InMemoryStorage, StorageBackend};
+use dblentry::storage::StorageBackend;
+use dblentry_memory::InMemoryStorage;
 
 fn setup() -> (Arc<dyn StorageBackend>, StatementExecutor) {
     let storage: Arc<dyn StorageBackend> = Arc::new(InMemoryStorage::new());

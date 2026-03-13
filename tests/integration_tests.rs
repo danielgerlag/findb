@@ -7,7 +7,7 @@ use dblentry::ast::{CreateCommand, Expression, UnaryExpression, Literal};
 use dblentry::lexer;
 use dblentry::models::DataValue;
 use dblentry::statement_executor::{ExecutionContext, StatementExecutor};
-use dblentry::storage::InMemoryStorage;
+use dblentry_memory::InMemoryStorage;
 
 /// Generate the same test body against memory, SQLite, and PostgreSQL backends.
 /// Memory and SQLite variants run normally. PostgreSQL variants are `#[ignore]`.
